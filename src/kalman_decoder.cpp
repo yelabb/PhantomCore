@@ -12,15 +12,17 @@ namespace phantomcore {
 // ============================================================================
 
 struct KalmanDecoder::Impl {
+    size_t num_channels = 0;
+    
     StateVector state;
     StateMatrix covariance;
-    KalmanGain kalman_gain;
     
-    // Pre-computed matrices for efficiency
-    StateMatrix A;           // State transition
-    StateMatrix Q;           // Process noise
-    ObsMatrix H;             // Observation model (raw space)
-    Eigen::Matrix<float, OBS_DIM, OBS_DIM> R;  // Measurement noise
+    // Pre-computed matrices for efficiency (dynamic sizes)
+    StateMatrix A;           // State transition [4x4]
+    StateMatrix Q;           // Process noise [4x4]
+    Eigen::MatrixXf H;       // Observation model [num_channels x 4]
+    Eigen::MatrixXf R;       // Measurement noise [num_channels x num_channels]
+    float measurement_noise_scale = 0.1f;
     
     // === Latent Space Decoding ===
     std::unique_ptr<PCAProjector> pca;
@@ -29,18 +31,15 @@ struct KalmanDecoder::Impl {
     bool use_latent = false;
     size_t latent_dim = 0;
     
-    // For observation model training
-    Eigen::Matrix<float, OBS_DIM, OBS_DIM> H_transpose_R_inv;
-    
     // Statistics
     LatencyTracker latency_tracker{1000};
     Duration max_decode_time{};
     uint64_t total_decodes = 0;
     float last_innovation_magnitude = 0.0f;
     
-    // Spike normalization
-    AlignedSpikeData spike_mean{};
-    AlignedSpikeData spike_std{};
+    // Spike normalization (dynamic)
+    SpikeData spike_mean;
+    SpikeData spike_std;
     size_t calibration_samples = 0;
     
     // Calibration results
@@ -48,27 +47,34 @@ struct KalmanDecoder::Impl {
     float last_cv_score = 0.0f;
     float last_lambda = 0.0f;
     
-    Impl() {
-        spike_mean.counts.fill(0.0f);
-        spike_std.counts.fill(1.0f);
+    explicit Impl(size_t channels) 
+        : num_channels(channels)
+        , spike_mean(channels)
+        , spike_std(channels)
+    {
+        for (size_t i = 0; i < channels; ++i) {
+            spike_std[i] = 1.0f;
+        }
+        
+        // Initialize dynamic matrices
+        H = Eigen::MatrixXf::Zero(channels, STATE_DIM);
+        R = Eigen::MatrixXf::Identity(channels, channels) * 0.1f;
     }
 };
 
 KalmanDecoder::KalmanDecoder(const Config& config)
-    : impl_(std::make_unique<Impl>()), config_(config) {
-    
+    : impl_(std::make_unique<Impl>(config.channel_config.num_channels))
+    , config_(config) 
+{
     // Initialize state
     impl_->state = config.initial_state;
     impl_->covariance = config.initial_covariance;
+    impl_->measurement_noise_scale = config.measurement_noise_scale;
     
     // Set up constant velocity model if not specified
     impl_->A = config.state_transition;
     if (impl_->A.isIdentity()) {
         // Default: constant velocity model
-        // [x']   [1 0 dt 0 ] [x ]
-        // [y'] = [0 1 0  dt] [y ]
-        // [vx']  [0 0 1  0 ] [vx]
-        // [vy']  [0 0 0  1 ] [vy]
         impl_->A << 1, 0, config.dt, 0,
                     0, 1, 0, config.dt,
                     0, 0, 1, 0,
@@ -76,94 +82,77 @@ KalmanDecoder::KalmanDecoder(const Config& config)
     }
     
     impl_->Q = config.process_noise;
-    impl_->H = config.observation_model;
-    impl_->R = config.measurement_noise;
 }
+
+KalmanDecoder::KalmanDecoder(const ChannelConfig& channel_config)
+    : KalmanDecoder(Config{.channel_config = channel_config}) {}
 
 KalmanDecoder::~KalmanDecoder() = default;
 KalmanDecoder::KalmanDecoder(KalmanDecoder&&) noexcept = default;
 KalmanDecoder& KalmanDecoder::operator=(KalmanDecoder&&) noexcept = default;
 
-DecoderOutput KalmanDecoder::decode(const SpikeCountArray& spike_counts) {
-    // Convert to aligned data
-    AlignedSpikeData aligned;
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
-        aligned[i] = static_cast<float>(spike_counts[i]);
-    }
-    return decode(aligned);
+// Primary decode method using SpikeData
+DecoderOutput KalmanDecoder::decode(const SpikeData& spike_data) {
+    return decode(spike_data.span());
 }
 
-DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
+// Span-based decode (main implementation)
+DecoderOutput KalmanDecoder::decode(std::span<const float> spike_counts) {
     auto start = Clock::now();
     
+    const size_t n = std::min(spike_counts.size(), impl_->num_channels);
+    
     // Normalize spikes (z-score)
-    AlignedSpikeData normalized;
-    simd::ChannelProcessor::compute_zscores(
-        spike_counts,
-        impl_->spike_mean,
-        impl_->spike_std,
-        normalized
-    );
+    SpikeData normalized(n);
+    for (size_t i = 0; i < n; ++i) {
+        float std = impl_->spike_std[i];
+        if (std < 1e-6f) std = 1.0f;
+        normalized[i] = (spike_counts[i] - impl_->spike_mean[i]) / std;
+    }
     
     // === PREDICT ===
-    // x_pred = A * x
     StateVector x_pred = impl_->A * impl_->state;
-    
-    // P_pred = A * P * A^T + Q
     StateMatrix P_pred = impl_->A * impl_->covariance * impl_->A.transpose() + impl_->Q;
     
     // === UPDATE ===
-    // Branch based on whether we use latent space or raw observations
-    
     if (impl_->use_latent && impl_->pca && impl_->pca->is_fitted()) {
         // =====================================================================
         // LATENT SPACE KALMAN UPDATE (PCA-reduced, much faster)
         // =====================================================================
-        // Project to latent space: 142 dims → k dims (typically 15)
-        Eigen::Map<const Eigen::VectorXf> z_raw(normalized.data(), NUM_CHANNELS);
+        Eigen::Map<const Eigen::VectorXf> z_map(normalized.data(), n);
+        Eigen::VectorXf z_raw = z_map;  // Explicit copy to resolve overload
         Eigen::VectorXf z_latent = impl_->pca->transform(z_raw);
         
-        const Eigen::Index k = static_cast<Eigen::Index>(impl_->latent_dim);
-        
-        // Innovation in latent space: y = z_latent - H_latent * x_pred
-        // Note: H_latent is [k x 4], maps state to latent observations
+        // Innovation in latent space
         Eigen::VectorXf y_latent = z_latent - impl_->H_latent * x_pred;
         impl_->last_innovation_magnitude = y_latent.norm();
         
-        // Kalman update with k-dimensional observations (k << 142)
-        // S = H_latent * P_pred * H_latent^T + R_latent  [k x k]
+        // Kalman update with k-dimensional observations
         Eigen::MatrixXf S = impl_->H_latent * P_pred * impl_->H_latent.transpose() + impl_->R_latent;
-        
-        // K = P_pred * H_latent^T * S^-1  [4 x k]
         Eigen::MatrixXf K = P_pred * impl_->H_latent.transpose() * S.inverse();
         
-        // Updated state: x = x_pred + K * y_latent
         impl_->state = x_pred + K * y_latent;
-        
-        // Updated covariance: P = (I - K * H_latent) * P_pred
-        StateMatrix I = StateMatrix::Identity();
-        impl_->covariance = (I - K * impl_->H_latent) * P_pred;
+        impl_->covariance = (StateMatrix::Identity() - K * impl_->H_latent) * P_pred;
         
     } else {
         // =====================================================================
-        // RAW OBSERVATION KALMAN UPDATE (142 dimensions - Woodbury optimized)
+        // RAW OBSERVATION KALMAN UPDATE (Woodbury optimized)
         // =====================================================================
-        Eigen::Map<const ObsVector> z(normalized.data());
+        Eigen::Map<const Eigen::VectorXf> z(normalized.data(), n);
         
-        // Innovation: y = z - H * x_pred
-        ObsVector y = z - impl_->H * x_pred;
+        // Innovation
+        Eigen::VectorXf y = z - impl_->H * impl_->state;
         impl_->last_innovation_magnitude = y.norm();
         
         // Woodbury identity for efficient update
         auto H_T = impl_->H.transpose();
-        float r_inv = 1.0f / impl_->R(0, 0);
+        float r_inv = 1.0f / impl_->measurement_noise_scale;
         
         StateMatrix H_T_R_inv_H = H_T * (r_inv * impl_->H);
-        StateMatrix P_pred_inv = P_pred.inverse();
-        StateMatrix M = (P_pred_inv + H_T_R_inv_H).inverse();
+        StateMatrix M = (P_pred.inverse() + H_T_R_inv_H).inverse();
         
-        impl_->kalman_gain = M * H_T * r_inv;
-        impl_->state = x_pred + impl_->kalman_gain * y;
+        Eigen::MatrixXf K = M * H_T * r_inv;
+        impl_->state = x_pred + K * y;
         impl_->covariance = M;
     }
     
@@ -184,6 +173,21 @@ DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
     impl_->total_decodes++;
     
     return output;
+}
+
+// Legacy decode methods (deprecated)
+DecoderOutput KalmanDecoder::decode(const SpikeCountArray& spike_counts) {
+    const size_t n = std::min(spike_counts.size(), impl_->num_channels);
+    SpikeData data(n);
+    for (size_t i = 0; i < n; ++i) {
+        data[i] = static_cast<float>(spike_counts[i]);
+    }
+    return decode(data);
+}
+
+DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
+    const size_t n = std::min(spike_counts.size(), impl_->num_channels);
+    return decode(std::span<const float>(spike_counts.data(), n));
 }
 
 DecoderOutput KalmanDecoder::predict() {
@@ -234,6 +238,8 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     CalibrationResult result;
     result.n_samples = static_cast<size_t>(neural_data.rows());
     
+    const size_t n_channels = impl_->num_channels;
+    
     if (neural_data.rows() < 10 || neural_data.rows() != kinematics.rows()) {
         return result;
     }
@@ -241,7 +247,8 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     // =========================================================================
     // Step 1: Compute normalization parameters (z-score)
     // =========================================================================
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    const size_t cols_to_use = std::min(static_cast<size_t>(neural_data.cols()), n_channels);
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         impl_->spike_mean[ch] = neural_data.col(static_cast<Eigen::Index>(ch)).mean();
         float variance = (neural_data.col(static_cast<Eigen::Index>(ch)).array() - 
                          impl_->spike_mean[ch]).square().mean();
@@ -252,15 +259,15 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     }
     
     // Normalize neural data
-    Eigen::MatrixXf normalized = neural_data;
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    Eigen::MatrixXf normalized = neural_data.leftCols(cols_to_use);
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         normalized.col(static_cast<Eigen::Index>(ch)) = 
             (neural_data.col(static_cast<Eigen::Index>(ch)).array() - impl_->spike_mean[ch]) / 
             impl_->spike_std[ch];
     }
     
     // =========================================================================
-    // Step 2: PCA Dimensionality Reduction (142 → latent_dim)
+    // Step 2: PCA Dimensionality Reduction (N channels → latent_dim)
     // =========================================================================
     Eigen::MatrixXf features;
     
@@ -269,7 +276,7 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
         pca_cfg.n_components = config_.latent_dim;
         pca_cfg.use_variance_threshold = config_.use_variance_threshold;
         pca_cfg.variance_threshold = config_.pca_variance_threshold;
-        pca_cfg.center = true;  // Already normalized, but center in PCA too
+        pca_cfg.center = true;
         
         impl_->pca = std::make_unique<PCAProjector>(pca_cfg);
         features = impl_->pca->fit_transform(normalized);
@@ -285,8 +292,8 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     } else {
         features = normalized;
         impl_->use_latent = false;
-        impl_->latent_dim = NUM_CHANNELS;
-        result.latent_dim = NUM_CHANNELS;
+        impl_->latent_dim = n_channels;
+        result.latent_dim = n_channels;
         result.variance_explained = 1.0f;
     }
     
@@ -296,19 +303,17 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     RidgeRegression::Config ridge_cfg;
     ridge_cfg.lambda = config_.ridge_lambda;
     ridge_cfg.fit_intercept = true;
-    ridge_cfg.normalize = false;  // Already normalized
+    ridge_cfg.normalize = false;
     
     RidgeRegression ridge(ridge_cfg);
     
     if (config_.auto_tune_lambda) {
-        // Cross-validate to find optimal lambda
         std::vector<float> lambdas = {0.001f, 0.01f, 0.1f, 1.0f, 10.0f, 100.0f, 1000.0f};
         auto cv_result = ridge.cross_validate(features, kinematics, lambdas, 5);
         
         result.optimal_lambda = cv_result.best_lambda;
         result.cv_score = cv_result.best_score;
         
-        // Refit with optimal lambda
         ridge.set_lambda(cv_result.best_lambda);
     } else {
         result.optimal_lambda = config_.ridge_lambda;
@@ -326,37 +331,18 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
     // =========================================================================
     // Step 4: Build Observation Model for Kalman Filter
     // =========================================================================
-    // The Ridge model learns: kinematics = features * W + b
-    // We need the inverse: H such that H * state ≈ observations
-    // 
-    // For Kalman, we model: z = H * x + noise
-    // where z = latent features, x = [x, y, vx, vy]
-    //
-    // From calibration: x ≈ features * W (Ridge weights)
-    // So: features ≈ x * W^-1 (pseudoinverse)
-    // Thus: H_latent = pinv(W)^T
-    
-    Eigen::MatrixXf W = ridge.coefficients();  // [latent_dim x 4]
+    Eigen::MatrixXf W = ridge.coefficients();
     
     if (impl_->use_latent) {
-        // Store latent observation model
-        // H_latent maps state (4) to latent (k): H_latent is [k x 4]
-        // We want: z_latent = H_latent * state
-        // From regression: state = features * W => features = state * pinv(W)
-        // So H_latent^T = pinv(W) => H_latent = pinv(W)^T
-        
-        // But for Kalman update, we need H such that innovation = z - H*x
-        // Using pseudoinverse of W
         impl_->H_latent = W;  // [latent_dim x 4]
-        
-        // Initialize latent R matrix
         impl_->R_latent = Eigen::MatrixXf::Identity(
             static_cast<Eigen::Index>(impl_->latent_dim),
             static_cast<Eigen::Index>(impl_->latent_dim)
         ) * 0.1f;
     } else {
-        // Full observation space - copy to fixed-size H
-        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(NUM_CHANNELS) && i < W.rows(); ++i) {
+        // Dynamic H matrix
+        impl_->H = Eigen::MatrixXf::Zero(n_channels, STATE_DIM);
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(cols_to_use) && i < W.rows(); ++i) {
             for (Eigen::Index j = 0; j < 4 && j < W.cols(); ++j) {
                 impl_->H(i, j) = W(i, j);
             }
@@ -369,11 +355,13 @@ KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
 }
 
 void KalmanDecoder::load_weights(std::span<const float> observation_weights) {
-    if (observation_weights.size() != OBS_DIM * STATE_DIM) {
-        throw std::runtime_error("Invalid weight size");
+    const size_t expected = impl_->num_channels * STATE_DIM;
+    if (observation_weights.size() != expected) {
+        throw std::runtime_error("Invalid weight size: expected " + 
+            std::to_string(expected) + ", got " + std::to_string(observation_weights.size()));
     }
     
-    for (size_t i = 0; i < OBS_DIM; ++i) {
+    for (size_t i = 0; i < impl_->num_channels; ++i) {
         for (size_t j = 0; j < STATE_DIM; ++j) {
             impl_->H(i, j) = observation_weights[i * STATE_DIM + j];
         }
@@ -381,8 +369,8 @@ void KalmanDecoder::load_weights(std::span<const float> observation_weights) {
 }
 
 std::vector<float> KalmanDecoder::save_weights() const {
-    std::vector<float> weights(OBS_DIM * STATE_DIM);
-    for (size_t i = 0; i < OBS_DIM; ++i) {
+    std::vector<float> weights(impl_->num_channels * STATE_DIM);
+    for (size_t i = 0; i < impl_->num_channels; ++i) {
         for (size_t j = 0; j < STATE_DIM; ++j) {
             weights[i * STATE_DIM + j] = impl_->H(i, j);
         }
@@ -400,66 +388,116 @@ KalmanDecoder::Stats KalmanDecoder::get_stats() const {
     return stats;
 }
 
+const ChannelConfig& KalmanDecoder::channel_config() const {
+    return config_.channel_config;
+}
+
+size_t KalmanDecoder::num_channels() const {
+    return impl_->num_channels;
+}
+
 // ============================================================================
 // LinearDecoder Implementation
 // ============================================================================
 
 LinearDecoder::LinearDecoder(const Config& config)
-    : config_(config) {
-    running_mean_.counts.fill(0.0f);
-    running_std_.counts.fill(1.0f);
-}
-
-DecoderOutput LinearDecoder::decode(const SpikeCountArray& spike_counts) {
-    AlignedSpikeData aligned;
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
-        aligned[i] = static_cast<float>(spike_counts[i]);
+    : config_(config)
+    , running_mean_(config.channel_config.num_channels)
+    , running_std_(config.channel_config.num_channels)
+{
+    // Initialize weights if empty
+    if (config_.weights_x.empty()) {
+        config_.weights_x.resize(config_.channel_config.num_channels, 0.0f);
     }
-    return decode(aligned);
+    if (config_.weights_y.empty()) {
+        config_.weights_y.resize(config_.channel_config.num_channels, 0.0f);
+    }
+    
+    for (size_t i = 0; i < running_std_.size(); ++i) {
+        running_std_[i] = 1.0f;
+    }
 }
 
-DecoderOutput LinearDecoder::decode(const AlignedSpikeData& spike_counts) {
+LinearDecoder::LinearDecoder(const ChannelConfig& channel_config)
+    : LinearDecoder(Config(channel_config)) {}
+
+// Primary decode with SpikeData
+DecoderOutput LinearDecoder::decode(const SpikeData& spike_data) {
+    return decode(spike_data.span());
+}
+
+// Span-based decode
+DecoderOutput LinearDecoder::decode(std::span<const float> spike_counts) {
     auto start = Clock::now();
     
-    AlignedSpikeData normalized = spike_counts;
+    const size_t n = std::min(spike_counts.size(), num_channels());
+    SpikeData normalized(n);
     
     // Normalize if enabled
     if (config_.normalize_input && sample_count_ > 10) {
-        simd::ChannelProcessor::compute_zscores(
-            spike_counts, running_mean_, running_std_, normalized
-        );
+        for (size_t i = 0; i < n; ++i) {
+            float std = running_std_[i];
+            if (std < 1e-6f) std = 1.0f;
+            normalized[i] = (spike_counts[i] - running_mean_[i]) / std;
+        }
+    } else {
+        for (size_t i = 0; i < n; ++i) {
+            normalized[i] = spike_counts[i];
+        }
     }
     
-    // Update running statistics
-    simd::ChannelProcessor::update_statistics(
-        spike_counts, running_mean_, running_std_, sample_count_
-    );
+    // Update running statistics (Welford's algorithm)
+    for (size_t i = 0; i < n; ++i) {
+        float delta = spike_counts[i] - running_mean_[i];
+        running_mean_[i] += delta / static_cast<float>(sample_count_ + 1);
+        float delta2 = spike_counts[i] - running_mean_[i];
+        float var = running_std_[i] * running_std_[i];
+        var += (delta * delta2 - var) / static_cast<float>(sample_count_ + 1);
+        running_std_[i] = std::sqrt(var);
+    }
     sample_count_++;
     
     // Apply linear decoder
-    Vec2 pos = simd::ChannelProcessor::apply_decoder(
-        normalized,
-        config_.weights_x,
-        config_.weights_y,
-        config_.bias_x,
-        config_.bias_y
-    );
+    float pos_x = config_.bias_x;
+    float pos_y = config_.bias_y;
+    for (size_t i = 0; i < n; ++i) {
+        pos_x += normalized[i] * config_.weights_x[i];
+        pos_y += normalized[i] * config_.weights_y[i];
+    }
     
     DecoderOutput output;
-    output.position = pos;
-    output.velocity = {0.0f, 0.0f};  // Linear decoder doesn't estimate velocity
+    output.position = {pos_x, pos_y};
+    output.velocity = {0.0f, 0.0f};
     output.confidence = 1.0f;
     output.processing_time = Clock::now() - start;
     
     return output;
 }
 
+// Legacy decode methods
+DecoderOutput LinearDecoder::decode(const SpikeCountArray& spike_counts) {
+    const size_t n = std::min(spike_counts.size(), num_channels());
+    SpikeData data(n);
+    for (size_t i = 0; i < n; ++i) {
+        data[i] = static_cast<float>(spike_counts[i]);
+    }
+    return decode(data);
+}
+
+DecoderOutput LinearDecoder::decode(const AlignedSpikeData& spike_counts) {
+    const size_t n = std::min(spike_counts.size(), num_channels());
+    return decode(std::span<const float>(spike_counts.data(), n));
+}
+
 void LinearDecoder::train(
     const Eigen::MatrixXf& neural_data,
     const Eigen::MatrixXf& positions
 ) {
+    const size_t n_channels = num_channels();
+    const size_t cols_to_use = std::min(static_cast<size_t>(neural_data.cols()), n_channels);
+    
     // Compute normalization
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         running_mean_[ch] = neural_data.col(ch).mean();
         float variance = (neural_data.col(ch).array() - running_mean_[ch]).square().mean();
         running_std_[ch] = std::sqrt(variance);
@@ -467,91 +505,103 @@ void LinearDecoder::train(
     }
     
     // Normalize
-    Eigen::MatrixXf X(neural_data.rows(), NUM_CHANNELS + 1);
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    Eigen::MatrixXf X(neural_data.rows(), cols_to_use + 1);
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         X.col(ch) = (neural_data.col(ch).array() - running_mean_[ch]) / running_std_[ch];
     }
-    X.col(NUM_CHANNELS).setOnes();  // Bias term
+    X.col(cols_to_use).setOnes();  // Bias term
     
     // Least squares: W = (X^T X)^-1 X^T Y
     Eigen::MatrixXf XtX = X.transpose() * X;
     Eigen::MatrixXf XtY = X.transpose() * positions;
-    Eigen::MatrixXf W = XtX.ldlt().solve(XtY);  // [143 x 2]
+    Eigen::MatrixXf W = XtX.ldlt().solve(XtY);
     
     // Extract weights
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         config_.weights_x[ch] = W(ch, 0);
         config_.weights_y[ch] = W(ch, 1);
     }
-    config_.bias_x = W(NUM_CHANNELS, 0);
-    config_.bias_y = W(NUM_CHANNELS, 1);
+    config_.bias_x = W(cols_to_use, 0);
+    config_.bias_y = W(cols_to_use, 1);
     
     sample_count_ = neural_data.rows();
 }
 
 void LinearDecoder::reset() {
-    config_.weights_x.fill(0.0f);
-    config_.weights_y.fill(0.0f);
+    std::fill(config_.weights_x.begin(), config_.weights_x.end(), 0.0f);
+    std::fill(config_.weights_y.begin(), config_.weights_y.end(), 0.0f);
     config_.bias_x = 0.0f;
     config_.bias_y = 0.0f;
-    running_mean_.counts.fill(0.0f);
-    running_std_.counts.fill(1.0f);
+    running_mean_.zero();
+    for (size_t i = 0; i < running_std_.size(); ++i) {
+        running_std_[i] = 1.0f;
+    }
     sample_count_ = 0;
 }
 
 // ============================================================================
-// VelocityKalmanDecoder Implementation
+// VelocityKalmanDecoder Implementation (Dynamic channels)
 // ============================================================================
 
 struct VelocityKalmanDecoder::Impl {
+    size_t num_channels = 142;  // Default, configurable
+    
     Eigen::Vector2f state;
     Eigen::Matrix2f covariance;
-    Eigen::Matrix<float, NUM_CHANNELS, 2> H;  // Observation model
+    Eigen::MatrixXf H;  // Observation model [num_channels x 2]
     
-    AlignedSpikeData spike_mean{};
-    AlignedSpikeData spike_std{};
+    SpikeData spike_mean;
+    SpikeData spike_std;
     
-    Impl() {
+    explicit Impl(size_t channels = 142) 
+        : num_channels(channels)
+        , spike_mean(channels)
+        , spike_std(channels)
+        , H(Eigen::MatrixXf::Zero(channels, 2))
+    {
         state.setZero();
         covariance.setIdentity();
-        H.setZero();
-        spike_mean.counts.fill(0.0f);
-        spike_std.counts.fill(1.0f);
+        for (size_t i = 0; i < channels; ++i) {
+            spike_std[i] = 1.0f;
+        }
     }
 };
 
 VelocityKalmanDecoder::VelocityKalmanDecoder(const Config& config)
-    : impl_(std::make_unique<Impl>()), config_(config) {}
+    : impl_(std::make_unique<Impl>(142))  // Default to MC_Maze for backward compat
+    , config_(config) {}
 
 DecoderOutput VelocityKalmanDecoder::decode(const SpikeCountArray& spike_counts) {
     auto start = Clock::now();
     
+    const size_t n = std::min(spike_counts.size(), impl_->num_channels);
+    
     // Normalize spikes
-    AlignedSpikeData normalized;
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
-        normalized[i] = (static_cast<float>(spike_counts[i]) - impl_->spike_mean[i]) / 
-                        impl_->spike_std[i];
+    SpikeData normalized(n);
+    for (size_t i = 0; i < n; ++i) {
+        float std = impl_->spike_std[i];
+        if (std < 1e-6f) std = 1.0f;
+        normalized[i] = (static_cast<float>(spike_counts[i]) - impl_->spike_mean[i]) / std;
     }
     
-    // Predict
-    // For velocity, we assume constant velocity: v_pred = v
+    // Predict - constant velocity model
     Eigen::Vector2f v_pred = impl_->state;
     Eigen::Matrix2f P_pred = impl_->covariance + config_.process_noise;
     
     // Update
-    Eigen::Map<const Eigen::Matrix<float, NUM_CHANNELS, 1>> z(normalized.data());
+    Eigen::Map<const Eigen::VectorXf> z(normalized.data(), n);
     
-    Eigen::Matrix<float, NUM_CHANNELS, 1> z_pred = impl_->H * v_pred;
-    Eigen::Matrix<float, NUM_CHANNELS, 1> y = z - z_pred;
+    Eigen::VectorXf z_pred = impl_->H.topRows(n) * v_pred;
+    Eigen::VectorXf y = z - z_pred;
     
-    Eigen::Matrix<float, NUM_CHANNELS, NUM_CHANNELS> S = 
-        impl_->H * P_pred * impl_->H.transpose() + 
-        Eigen::Matrix<float, NUM_CHANNELS, NUM_CHANNELS>::Identity() * config_.measurement_noise;
+    Eigen::MatrixXf H_n = impl_->H.topRows(n);
+    Eigen::MatrixXf S = H_n * P_pred * H_n.transpose() + 
+        Eigen::MatrixXf::Identity(n, n) * config_.measurement_noise;
     
-    Eigen::Matrix<float, 2, NUM_CHANNELS> K = P_pred * impl_->H.transpose() * S.inverse();
+    Eigen::MatrixXf K = P_pred * H_n.transpose() * S.inverse();
     
     impl_->state = v_pred + K * y;
-    impl_->covariance = (Eigen::Matrix2f::Identity() - K * impl_->H) * P_pred;
+    impl_->covariance = (Eigen::Matrix2f::Identity() - K * H_n) * P_pred;
     
     // Integrate position
     integrated_position_.x += impl_->state(0) * config_.dt;
@@ -576,25 +626,33 @@ void VelocityKalmanDecoder::calibrate(
     const Eigen::MatrixXf& neural_data,
     const Eigen::MatrixXf& velocities
 ) {
+    const size_t n_channels = impl_->num_channels;
+    const size_t cols_to_use = std::min(static_cast<size_t>(neural_data.cols()), n_channels);
+    
+    // Resize if needed
+    if (cols_to_use != n_channels) {
+        impl_ = std::make_unique<Impl>(cols_to_use);
+    }
+    
     // Compute normalization
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         impl_->spike_mean[ch] = neural_data.col(ch).mean();
         float variance = (neural_data.col(ch).array() - impl_->spike_mean[ch]).square().mean();
         impl_->spike_std[ch] = std::sqrt(variance);
         if (impl_->spike_std[ch] < 1e-6f) impl_->spike_std[ch] = 1.0f;
     }
     
-    // Train observation model (simplified)
+    // Train observation model
     Eigen::MatrixXf X = velocities;  // [N x 2]
-    Eigen::MatrixXf Z = neural_data;
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    Eigen::MatrixXf Z = neural_data.leftCols(cols_to_use);
+    for (size_t ch = 0; ch < cols_to_use; ++ch) {
         Z.col(ch) = (Z.col(ch).array() - impl_->spike_mean[ch]) / impl_->spike_std[ch];
     }
     
     auto XtX = X.transpose() * X;
     auto XtZ = X.transpose() * Z;
-    Eigen::MatrixXf H_temp = XtX.ldlt().solve(XtZ);  // [2 x 142]
-    impl_->H = H_temp.transpose();  // [142 x 2]
+    Eigen::MatrixXf H_temp = XtX.ldlt().solve(XtZ);  // [2 x cols_to_use]
+    impl_->H = H_temp.transpose();  // [cols_to_use x 2]
 }
 
 }  // namespace phantomcore

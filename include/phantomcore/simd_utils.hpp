@@ -242,14 +242,51 @@ void matrix_vector_mul(
 // ============================================================================
 
 /**
- * @brief Processes a full 142-channel spike count array
- * Specialized for the exact channel count with optimal SIMD utilization
+ * @brief Channel processor for neural data operations
+ * 
+ * Provides optimized operations for both legacy fixed-size arrays
+ * and new dynamic SpikeData. The dynamic versions should be preferred.
  */
 struct ChannelProcessor {
+    // === Dynamic Channel Operations (Preferred) ===
+    
     /// Computes mean firing rate across all channels
-    static float compute_mean_rate(const AlignedSpikeData& spikes);
+    static float compute_mean_rate(const SpikeData& spikes);
+    static float compute_mean_rate(std::span<const float> spikes);
     
     /// Computes per-channel z-scores
+    static void compute_zscores(
+        std::span<const float> spikes,
+        std::span<const float> means,
+        std::span<const float> stds,
+        std::span<float> result
+    );
+    
+    /// Applies linear decoder weights (dynamic)
+    static Vec2 apply_decoder(
+        std::span<const float> spikes,
+        std::span<const float> weights_x,
+        std::span<const float> weights_y,
+        float bias_x,
+        float bias_y
+    );
+    
+    /// Updates running mean/variance with new sample
+    static void update_statistics(
+        std::span<const float> spikes,
+        std::span<float> running_mean,
+        std::span<float> running_var,
+        size_t sample_count
+    );
+    
+    // === Legacy Fixed-Size Operations (Deprecated) ===
+    
+    /// Legacy: Computes mean firing rate across 142 channels
+    [[deprecated("Use SpikeData overload for dynamic channels")]]
+    static float compute_mean_rate(const AlignedSpikeData& spikes);
+    
+    /// Legacy: Computes per-channel z-scores for 142 channels
+    [[deprecated("Use span overload for dynamic channels")]]
     static void compute_zscores(
         const AlignedSpikeData& spikes,
         const AlignedSpikeData& means,
@@ -257,16 +294,18 @@ struct ChannelProcessor {
         AlignedSpikeData& result
     );
     
-    /// Applies linear decoder weights
+    /// Legacy: Applies linear decoder weights for 142 channels
+    [[deprecated("Use span overload for dynamic channels")]]
     static Vec2 apply_decoder(
         const AlignedSpikeData& spikes,
-        const std::array<float, NUM_CHANNELS>& weights_x,
-        const std::array<float, NUM_CHANNELS>& weights_y,
+        const std::array<float, 142>& weights_x,
+        const std::array<float, 142>& weights_y,
         float bias_x,
         float bias_y
     );
     
-    /// Updates running mean/variance with new sample
+    /// Legacy: Updates running statistics for 142 channels
+    [[deprecated("Use span overload for dynamic channels")]]
     static void update_statistics(
         const AlignedSpikeData& spikes,
         AlignedSpikeData& running_mean,

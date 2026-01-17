@@ -12,29 +12,31 @@ namespace phantomcore {
 // ============================================================================
 
 struct SpikeDetector::Impl {
-    // Per-channel state
-    std::array<float, NUM_CHANNELS> thresholds{};
-    std::array<float, NUM_CHANNELS> running_mean{};
-    std::array<float, NUM_CHANNELS> running_var{};
-    std::array<size_t, NUM_CHANNELS> refractory_counter{};
-    std::array<bool, NUM_CHANNELS> channel_enabled{};
+    size_t num_channels = 0;
+    
+    // Per-channel state (dynamic allocation)
+    std::vector<float> thresholds;
+    std::vector<float> running_mean;
+    std::vector<float> running_var;
+    std::vector<size_t> refractory_counter;
+    std::vector<bool> channel_enabled;
     
     // DSP: Bandpass filter bank (one filter per channel)
-    std::unique_ptr<BandpassFilterBank<NUM_CHANNELS>> filter_bank;
+    std::unique_ptr<DynamicBandpassFilterBank> filter_bank;
     bool filtering_enabled = true;
     
     // Statistics
-    Stats stats{};
+    Stats stats;
     LatencyTracker latency_tracker{1000};
     size_t sample_count = 0;
     
-    Impl() {
-        thresholds.fill(0.0f);
-        running_mean.fill(0.0f);
-        running_var.fill(1.0f);
-        refractory_counter.fill(0);
-        channel_enabled.fill(true);
-        stats.spikes_per_channel.fill(0);
+    explicit Impl(size_t channels) : num_channels(channels) {
+        thresholds.resize(channels, 0.0f);
+        running_mean.resize(channels, 0.0f);
+        running_var.resize(channels, 1.0f);
+        refractory_counter.resize(channels, 0);
+        channel_enabled.resize(channels, true);
+        stats.spikes_per_channel.resize(channels, 0);
     }
     
     void update_adaptive_threshold(size_t channel, float value, double rate) {
@@ -53,10 +55,16 @@ struct SpikeDetector::Impl {
     }
 };
 
-SpikeDetector::SpikeDetector(const SpikeDetectorConfig& config)
-    : impl_(std::make_unique<Impl>()), config_(config) {
+SpikeDetector::SpikeDetector(
+    const ChannelConfig& channel_config,
+    const SpikeDetectorConfig& config
+)
+    : impl_(std::make_unique<Impl>(channel_config.num_channels))
+    , channel_config_(channel_config)
+    , config_(config) 
+{
     // Initialize thresholds based on config
-    impl_->thresholds.fill(config.threshold_std);
+    std::fill(impl_->thresholds.begin(), impl_->thresholds.end(), config.threshold_std);
     
     // Initialize bandpass filter bank
     impl_->filtering_enabled = config.use_bandpass_filter;
@@ -67,9 +75,15 @@ SpikeDetector::SpikeDetector(const SpikeDetectorConfig& config)
         filter_cfg.high_cutoff = config.bandpass_high;
         filter_cfg.order = config.filter_order;
         
-        impl_->filter_bank = std::make_unique<BandpassFilterBank<NUM_CHANNELS>>(filter_cfg);
+        impl_->filter_bank = std::make_unique<DynamicBandpassFilterBank>(
+            channel_config.num_channels, filter_cfg
+        );
     }
 }
+
+// Legacy constructor for backward compatibility
+SpikeDetector::SpikeDetector(const SpikeDetectorConfig& config)
+    : SpikeDetector(ChannelConfig::mc_maze(), config) {}
 
 SpikeDetector::~SpikeDetector() = default;
 SpikeDetector::SpikeDetector(SpikeDetector&&) noexcept = default;
@@ -82,7 +96,7 @@ std::vector<SpikeEvent> SpikeDetector::process_sample(
     auto start = Clock::now();
     std::vector<SpikeEvent> events;
     
-    const size_t num_channels = std::min(sample.size(), NUM_CHANNELS);
+    const size_t num_channels = std::min(sample.size(), impl_->num_channels);
     
     for (size_t ch = 0; ch < num_channels; ++ch) {
         if (!impl_->channel_enabled[ch]) continue;
@@ -169,7 +183,8 @@ std::vector<SpikeEvent> SpikeDetector::process_spike_counts(
     // Each count > 0 indicates spike activity in that bin
     std::vector<SpikeEvent> events;
     
-    for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    const size_t num_channels = std::min(spike_counts.size(), impl_->num_channels);
+    for (size_t ch = 0; ch < num_channels; ++ch) {
         if (!impl_->channel_enabled[ch]) continue;
         
         int32_t count = spike_counts[ch];
@@ -191,8 +206,8 @@ std::vector<SpikeEvent> SpikeDetector::process_spike_counts(
 
 void SpikeDetector::reset() {
     // Reset statistics and thresholds
-    impl_ = std::make_unique<Impl>();
-    impl_->thresholds.fill(config_.threshold_std);
+    impl_ = std::make_unique<Impl>(channel_config_.num_channels);
+    std::fill(impl_->thresholds.begin(), impl_->thresholds.end(), config_.threshold_std);
     
     // Reinitialize bandpass filter bank with fresh state
     impl_->filtering_enabled = config_.use_bandpass_filter;
@@ -203,7 +218,9 @@ void SpikeDetector::reset() {
         filter_cfg.high_cutoff = config_.bandpass_high;
         filter_cfg.order = config_.filter_order;
         
-        impl_->filter_bank = std::make_unique<BandpassFilterBank<NUM_CHANNELS>>(filter_cfg);
+        impl_->filter_bank = std::make_unique<DynamicBandpassFilterBank>(
+            channel_config_.num_channels, filter_cfg
+        );
     }
 }
 
@@ -230,13 +247,13 @@ SpikeDetector::Stats SpikeDetector::get_stats() const {
 }
 
 void SpikeDetector::set_channel_threshold(size_t channel, float threshold_std) {
-    if (channel < NUM_CHANNELS) {
+    if (channel < impl_->num_channels) {
         impl_->thresholds[channel] = threshold_std;
     }
 }
 
 void SpikeDetector::set_channel_enabled(size_t channel, bool enabled) {
-    if (channel < NUM_CHANNELS) {
+    if (channel < impl_->num_channels) {
         impl_->channel_enabled[channel] = enabled;
     }
 }

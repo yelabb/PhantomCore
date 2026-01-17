@@ -22,10 +22,24 @@ namespace phantomcore {
  * - Removes LFP (< 300 Hz): Slow oscillations, movement artifacts
  * - Removes high-freq noise (> 3000 Hz): EMG, electrical interference
  * - Isolates action potential frequency band
+ * 
+ * Supports runtime-configurable channel count for different hardware.
  */
 class SpikeDetector {
 public:
-    explicit SpikeDetector(const SpikeDetectorConfig& config = {});
+    /**
+     * @brief Construct detector with channel configuration
+     * @param channel_config Hardware-specific channel setup
+     * @param config Detection parameters
+     */
+    explicit SpikeDetector(
+        const ChannelConfig& channel_config = ChannelConfig::mc_maze(),
+        const SpikeDetectorConfig& config = {}
+    );
+    
+    /// Legacy constructor for backward compatibility
+    explicit SpikeDetector(const SpikeDetectorConfig& config);
+    
     ~SpikeDetector();
     
     // Non-copyable, movable
@@ -87,7 +101,7 @@ public:
      */
     struct Stats {
         uint64_t total_spikes_detected = 0;
-        std::array<uint64_t, NUM_CHANNELS> spikes_per_channel{};
+        std::vector<uint64_t> spikes_per_channel;  // Dynamic size
         double mean_rate_hz = 0.0;
         Duration mean_processing_time{};
     };
@@ -103,10 +117,21 @@ public:
      * @brief Get configuration
      */
     const SpikeDetectorConfig& config() const { return config_; }
+    
+    /**
+     * @brief Get channel configuration
+     */
+    const ChannelConfig& channel_config() const { return channel_config_; }
+    
+    /**
+     * @brief Get number of channels
+     */
+    size_t num_channels() const { return channel_config_.num_channels; }
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    ChannelConfig channel_config_;
     SpikeDetectorConfig config_;
 };
 

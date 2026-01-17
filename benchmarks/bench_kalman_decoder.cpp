@@ -1,6 +1,7 @@
 #include <benchmark/benchmark.h>
 #include <phantomcore/kalman_decoder.hpp>
 #include <random>
+#include <algorithm>
 
 using namespace phantomcore;
 
@@ -47,9 +48,9 @@ static void BM_KalmanDecoder_Predict(benchmark::State& state) {
 BENCHMARK(BM_KalmanDecoder_Predict);
 
 static void BM_LinearDecoder_Decode(benchmark::State& state) {
-    LinearDecoder::Config config;
-    config.weights_x.fill(0.01f);
-    config.weights_y.fill(0.02f);
+    LinearDecoder::Config config(ChannelConfig::mc_maze());
+    std::fill(config.weights_x.begin(), config.weights_x.end(), 0.01f);
+    std::fill(config.weights_y.begin(), config.weights_y.end(), 0.02f);
     
     LinearDecoder decoder(config);
     
@@ -66,4 +67,4 @@ static void BM_LinearDecoder_Decode(benchmark::State& state) {
 }
 BENCHMARK(BM_LinearDecoder_Decode);
 
-BENCHMARK_MAIN();
+// Note: BENCHMARK_MAIN() is defined in bench_spike_detector.cpp

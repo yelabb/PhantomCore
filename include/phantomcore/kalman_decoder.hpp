@@ -16,7 +16,7 @@ class RidgeRegression;
  * 
  * Production-grade implementation with:
  * 
- * 1. **PCA Dimensionality Reduction**: 142 channels → 15 latent dimensions
+ * 1. **PCA Dimensionality Reduction**: N channels → K latent dimensions
  *    Reduces noise, computational cost, and improves generalization
  * 
  * 2. **Regularized Calibration**: Ridge regression to prevent overfitting
@@ -26,29 +26,32 @@ class RidgeRegression;
  *    where k = latent dim, n = channels
  * 
  * Pipeline:
- *   Spikes (142) → [PCA] → Latent (15) → [Kalman Filter] → Kinematics (4)
+ *   Spikes (N) → [PCA] → Latent (K) → [Kalman Filter] → Kinematics (4)
  * 
  * State vector: [x, y, vx, vy]^T
+ * 
+ * Supports runtime-configurable channel count for different hardware.
  */
 class KalmanDecoder {
 public:
     /// State dimension (position + velocity in 2D)
     static constexpr size_t STATE_DIM = 4;
     
-    /// Raw observation dimension (neural channels)
-    static constexpr size_t OBS_DIM = NUM_CHANNELS;
-    
     /// Default latent dimension after PCA
     static constexpr size_t DEFAULT_LATENT_DIM = 15;
     
+    // Dynamic types for runtime channel count
     using StateVector = Eigen::Vector<float, STATE_DIM>;
     using StateMatrix = Eigen::Matrix<float, STATE_DIM, STATE_DIM>;
-    using ObsVector = Eigen::Vector<float, OBS_DIM>;
-    using LatentVector = Eigen::VectorXf;  // Dynamic size for latent space
-    using ObsMatrix = Eigen::Matrix<float, OBS_DIM, STATE_DIM>;
-    using KalmanGain = Eigen::Matrix<float, STATE_DIM, OBS_DIM>;
+    using ObsVector = Eigen::VectorXf;       // Dynamic: N channels
+    using LatentVector = Eigen::VectorXf;    // Dynamic: K latent dims
+    using ObsMatrix = Eigen::MatrixXf;       // Dynamic: N x STATE_DIM
+    using KalmanGain = Eigen::MatrixXf;      // Dynamic: STATE_DIM x N or STATE_DIM x K
     
     struct Config {
+        /// Channel configuration (runtime)
+        ChannelConfig channel_config = ChannelConfig::mc_maze();
+        
         /// State transition model (A matrix)
         /// Default: constant velocity model
         StateMatrix state_transition = StateMatrix::Identity();
@@ -56,12 +59,8 @@ public:
         /// Process noise covariance (Q matrix)
         StateMatrix process_noise = StateMatrix::Identity() * 0.01f;
         
-        /// Measurement noise covariance (R matrix)
-        Eigen::Matrix<float, OBS_DIM, OBS_DIM> measurement_noise = 
-            Eigen::Matrix<float, OBS_DIM, OBS_DIM>::Identity() * 0.1f;
-        
-        /// Observation model (H matrix) - learned from calibration
-        ObsMatrix observation_model = ObsMatrix::Zero();
+        /// Measurement noise scale (for dynamic R matrix)
+        float measurement_noise_scale = 0.1f;
         
         /// Initial state estimate
         StateVector initial_state = StateVector::Zero();
@@ -84,6 +83,10 @@ public:
     };
     
     explicit KalmanDecoder(const Config& config = {});
+    
+    /// Convenience constructor with channel config
+    explicit KalmanDecoder(const ChannelConfig& channel_config);
+    
     ~KalmanDecoder();
     
     // Non-copyable, movable
@@ -94,14 +97,26 @@ public:
     
     /**
      * @brief Process neural data and decode kinematics
-     * @param spike_counts 142-channel spike counts
+     * @param spike_data Dynamic spike counts
      * @return Decoded position and velocity
      */
+    DecoderOutput decode(const SpikeData& spike_data);
+    
+    /**
+     * @brief Process with span (for compatibility)
+     */
+    DecoderOutput decode(std::span<const float> spike_counts);
+    
+    /**
+     * @brief Legacy: Process with fixed-size array (deprecated)
+     */
+    [[deprecated("Use decode(SpikeData) or decode(span) for dynamic channels")]]
     DecoderOutput decode(const SpikeCountArray& spike_counts);
     
     /**
-     * @brief Process with aligned spike data (faster)
+     * @brief Legacy: Process with aligned spike data (deprecated)
      */
+    [[deprecated("Use decode(SpikeData) for dynamic channels")]]
     DecoderOutput decode(const AlignedSpikeData& spike_counts);
     
     /**
@@ -181,6 +196,16 @@ public:
         float innovation_magnitude = 0.0f;  // Prediction error magnitude
     };
     Stats get_stats() const;
+    
+    /**
+     * @brief Get channel configuration
+     */
+    const ChannelConfig& channel_config() const;
+    
+    /**
+     * @brief Get number of channels
+     */
+    size_t num_channels() const;
 
 private:
     struct Impl;
@@ -191,23 +216,41 @@ private:
 /**
  * @brief Simple linear decoder baseline
  * Fast but less accurate than Kalman filter
+ * 
+ * Supports runtime-configurable channel count.
  */
 class LinearDecoder {
 public:
     struct Config {
-        std::array<float, NUM_CHANNELS> weights_x{};
-        std::array<float, NUM_CHANNELS> weights_y{};
+        ChannelConfig channel_config = ChannelConfig::mc_maze();
+        std::vector<float> weights_x;
+        std::vector<float> weights_y;
         float bias_x = 0.0f;
         float bias_y = 0.0f;
         bool normalize_input = true;
+        
+        Config() = default;
+        explicit Config(const ChannelConfig& ch_config) 
+            : channel_config(ch_config)
+            , weights_x(ch_config.num_channels, 0.0f)
+            , weights_y(ch_config.num_channels, 0.0f) {}
     };
     
     explicit LinearDecoder(const Config& config = {});
+    explicit LinearDecoder(const ChannelConfig& channel_config);
     
     /**
-     * @brief Decode position from spike counts
+     * @brief Decode position from spike counts (dynamic)
      */
+    DecoderOutput decode(const SpikeData& spike_data);
+    DecoderOutput decode(std::span<const float> spike_counts);
+    
+    /**
+     * @brief Legacy: Decode from fixed-size arrays
+     */
+    [[deprecated("Use decode(SpikeData) for dynamic channels")]]
     DecoderOutput decode(const SpikeCountArray& spike_counts);
+    [[deprecated("Use decode(SpikeData) for dynamic channels")]]
     DecoderOutput decode(const AlignedSpikeData& spike_counts);
     
     /**
@@ -222,11 +265,13 @@ public:
      * @brief Reset to untrained state
      */
     void reset();
+    
+    size_t num_channels() const { return config_.channel_config.num_channels; }
 
 private:
     Config config_;
-    AlignedSpikeData running_mean_{};
-    AlignedSpikeData running_std_{};
+    SpikeData running_mean_;
+    SpikeData running_std_;
     size_t sample_count_ = 0;
 };
 

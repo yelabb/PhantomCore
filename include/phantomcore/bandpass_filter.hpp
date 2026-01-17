@@ -201,12 +201,96 @@ private:
 };
 
 /**
- * @brief Multi-channel bandpass filter bank
+ * @brief Multi-channel bandpass filter bank (Dynamic)
  * 
- * Manages independent filter state per channel.
- * Required because each channel needs its own z1/z2 state.
+ * Runtime-configurable channel count for hardware flexibility.
+ * Each channel maintains independent filter state (z1/z2).
  */
-template<size_t NumChannels = NUM_CHANNELS>
+class DynamicBandpassFilterBank {
+public:
+    using Config = ButterworthBandpass::Config;
+    
+    DynamicBandpassFilterBank() = default;
+    
+    explicit DynamicBandpassFilterBank(size_t num_channels, const Config& config = {})
+        : num_channels_(num_channels)
+        , filters_(num_channels, ButterworthBandpass(config))
+    {}
+    
+    explicit DynamicBandpassFilterBank(const ChannelConfig& channel_config, const Config& filter_config = {})
+        : DynamicBandpassFilterBank(channel_config.num_channels, filter_config)
+    {}
+    
+    /**
+     * @brief Process single sample for one channel
+     */
+    [[nodiscard]] inline float process(size_t channel, float x) noexcept {
+        return filters_[channel].process(x);
+    }
+    
+    /**
+     * @brief Process multi-channel sample in-place
+     */
+    void process_multichannel(float* sample) noexcept {
+        for (size_t ch = 0; ch < num_channels_; ++ch) {
+            sample[ch] = filters_[ch].process(sample[ch]);
+        }
+    }
+    
+    /**
+     * @brief Process multi-channel sample (span version)
+     */
+    void process_multichannel(std::span<float> sample) noexcept {
+        const size_t n = std::min(sample.size(), num_channels_);
+        for (size_t ch = 0; ch < n; ++ch) {
+            sample[ch] = filters_[ch].process(sample[ch]);
+        }
+    }
+    
+    /**
+     * @brief Reset all filter states
+     */
+    void reset() noexcept {
+        for (auto& filter : filters_) {
+            filter.reset();
+        }
+    }
+    
+    /**
+     * @brief Reconfigure all filters
+     */
+    void reconfigure(const Config& config) {
+        for (auto& filter : filters_) {
+            filter.reconfigure(config);
+        }
+    }
+    
+    /**
+     * @brief Resize for different channel count
+     */
+    void resize(size_t num_channels, const Config& config = {}) {
+        num_channels_ = num_channels;
+        filters_.resize(num_channels, ButterworthBandpass(config));
+    }
+    
+    size_t num_channels() const noexcept { return num_channels_; }
+    ButterworthBandpass& channel_filter(size_t ch) { return filters_[ch]; }
+    const ButterworthBandpass& channel_filter(size_t ch) const { return filters_[ch]; }
+    
+private:
+    size_t num_channels_ = 0;
+    std::vector<ButterworthBandpass> filters_;
+};
+
+/**
+ * @brief Multi-channel bandpass filter bank (Static Template)
+ * 
+ * Compile-time fixed channel count for maximum performance.
+ * Use when channel count is known at compile time.
+ * 
+ * @tparam NumChannels Number of channels (0 = use legacy NUM_CHANNELS)
+ */
+template<size_t NumChannels = 142>
 class BandpassFilterBank {
 public:
     using Config = ButterworthBandpass::Config;
@@ -263,6 +347,7 @@ public:
         }
     }
     
+    static constexpr size_t num_channels() noexcept { return NumChannels; }
     ButterworthBandpass& channel_filter(size_t ch) { return filters_[ch]; }
     const ButterworthBandpass& channel_filter(size_t ch) const { return filters_[ch]; }
     

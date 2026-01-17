@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <phantomcore/ring_buffer.hpp>
+#include <phantomcore/types.hpp>  // For NeuralPacket
 #include <thread>
 
 using namespace phantomcore;

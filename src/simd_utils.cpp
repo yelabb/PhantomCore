@@ -488,11 +488,67 @@ void matrix_vector_mul(
 #endif  // PHANTOMCORE_HAS_AVX2
 
 // ============================================================================
-// Channel Processor Implementation
+// Channel Processor Implementation - Dynamic (Preferred)
+// ============================================================================
+
+float ChannelProcessor::compute_mean_rate(const SpikeData& spikes) {
+    return compute_mean_rate(spikes.span());
+}
+
+float ChannelProcessor::compute_mean_rate(std::span<const float> spikes) {
+    return vector_mean(spikes.data(), spikes.size());
+}
+
+void ChannelProcessor::compute_zscores(
+    std::span<const float> spikes,
+    std::span<const float> means,
+    std::span<const float> stds,
+    std::span<float> result
+) {
+    const size_t n = std::min({spikes.size(), means.size(), stds.size(), result.size()});
+    simd::compute_zscores(
+        spikes.data(), means.data(), stds.data(),
+        result.data(), n
+    );
+}
+
+Vec2 ChannelProcessor::apply_decoder(
+    std::span<const float> spikes,
+    std::span<const float> weights_x,
+    std::span<const float> weights_y,
+    float bias_x,
+    float bias_y
+) {
+    const size_t n = std::min({spikes.size(), weights_x.size(), weights_y.size()});
+    Vec2 result;
+    result.x = vector_dot(spikes.data(), weights_x.data(), n) + bias_x;
+    result.y = vector_dot(spikes.data(), weights_y.data(), n) + bias_y;
+    return result;
+}
+
+void ChannelProcessor::update_statistics(
+    std::span<const float> spikes,
+    std::span<float> running_mean,
+    std::span<float> running_var,
+    size_t sample_count
+) {
+    const size_t n = std::min({spikes.size(), running_mean.size(), running_var.size()});
+    float count = static_cast<float>(sample_count + 1);
+    
+    for (size_t i = 0; i < n; ++i) {
+        float delta = spikes[i] - running_mean[i];
+        running_mean[i] += delta / count;
+        float delta2 = spikes[i] - running_mean[i];
+        running_var[i] += delta * delta2;
+    }
+}
+
+// ============================================================================
+// Channel Processor Implementation - Legacy (Deprecated)
 // ============================================================================
 
 float ChannelProcessor::compute_mean_rate(const AlignedSpikeData& spikes) {
-    return vector_mean(spikes.data(), NUM_CHANNELS);
+    return vector_mean(spikes.data(), 142);
 }
 
 void ChannelProcessor::compute_zscores(
@@ -503,20 +559,20 @@ void ChannelProcessor::compute_zscores(
 ) {
     simd::compute_zscores(
         spikes.data(), means.data(), stds.data(),
-        result.data(), NUM_CHANNELS
+        result.data(), 142
     );
 }
 
 Vec2 ChannelProcessor::apply_decoder(
     const AlignedSpikeData& spikes,
-    const std::array<float, NUM_CHANNELS>& weights_x,
-    const std::array<float, NUM_CHANNELS>& weights_y,
+    const std::array<float, 142>& weights_x,
+    const std::array<float, 142>& weights_y,
     float bias_x,
     float bias_y
 ) {
     Vec2 result;
-    result.x = vector_dot(spikes.data(), weights_x.data(), NUM_CHANNELS) + bias_x;
-    result.y = vector_dot(spikes.data(), weights_y.data(), NUM_CHANNELS) + bias_y;
+    result.x = vector_dot(spikes.data(), weights_x.data(), 142) + bias_x;
+    result.y = vector_dot(spikes.data(), weights_y.data(), 142) + bias_y;
     return result;
 }
 
@@ -529,7 +585,7 @@ void ChannelProcessor::update_statistics(
     // Welford's online algorithm for variance
     float n = static_cast<float>(sample_count + 1);
     
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
+    for (size_t i = 0; i < 142; ++i) {
         float delta = spikes[i] - running_mean[i];
         running_mean[i] += delta / n;
         float delta2 = spikes[i] - running_mean[i];

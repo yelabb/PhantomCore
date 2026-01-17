@@ -16,7 +16,8 @@ RidgeRegression::RidgeRegression(RidgeRegression&&) noexcept = default;
 RidgeRegression& RidgeRegression::operator=(RidgeRegression&&) noexcept = default;
 
 bool RidgeRegression::fit(const Eigen::MatrixXf& X, const Eigen::VectorXf& y) {
-    return fit(X, y.replicate(1, 1));  // Convert to matrix
+    Eigen::MatrixXf y_mat = y.replicate(1, 1);  // Explicit conversion to MatrixXf
+    return fit(X, y_mat);
 }
 
 bool RidgeRegression::fit(const Eigen::MatrixXf& X, const Eigen::MatrixXf& y) {

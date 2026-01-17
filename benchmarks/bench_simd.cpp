@@ -141,4 +141,4 @@ static void BM_VectorDot_Size(benchmark::State& state) {
 }
 BENCHMARK(BM_VectorDot_Size)->Range(8, 8192);
 
-BENCHMARK_MAIN();
+// Note: BENCHMARK_MAIN() is defined in bench_spike_detector.cpp

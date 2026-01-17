@@ -39,12 +39,20 @@ PhantomCore is a high-performance C++ library for real-time neural signal proces
 using namespace phantomcore;
 
 int main() {
+    // Configure for your hardware (runtime - no recompilation needed!)
+    auto config = ChannelConfig::neuropixels();  // 384 channels
+    // Or: ChannelConfig::utah_array_96()        // 96 channels
+    // Or: ChannelConfig::mc_maze()              // 142 channels (default)
+    // Or: ChannelConfig::custom(256, "MyArray") // Custom hardware
+    
     // Connect to PhantomLink
     StreamClient client;
     client.connect("swift-neural-42");
     
-    // Real-time decode pipeline
-    KalmanDecoder decoder;
+    // Real-time decode pipeline with dynamic channels
+    KalmanDecoder::Config decoder_config;
+    decoder_config.channel_config = config;
+    KalmanDecoder decoder(decoder_config);
     
     client.on_packet([&](const NeuralPacket& packet) {
         auto output = decoder.decode(packet.spike_counts);
@@ -86,10 +94,44 @@ int main() {
 | Component | Description | Mean Latency |
 |-----------|-------------|--------------|
 | `StreamClient` | WebSocket client for PhantomLink | ~10μs |
-| `SpikeDetector` | Threshold crossing detection | ~13μs |
+| `SpikeDetector` | Threshold crossing + bandpass filtering | ~13μs |
 | `KalmanDecoder` | Woodbury-optimized state-space decoder | ~4μs |
 | `LinearDecoder` | Simple linear regression | ~0.5μs |
 | `RingBuffer` | Lock-free SPSC queue | ~0.05μs |
+| `PCAProjector` | Dimensionality reduction (142→15 dims) | ~2μs |
+| `RidgeRegression` | Regularized calibration | - |
+
+---
+
+## ⚡ Hardware Flexibility
+
+PhantomCore supports **runtime channel configuration** - switch between different neural recording hardware without recompilation:
+
+```cpp
+// Pre-defined hardware presets
+auto utah96  = ChannelConfig::utah_array_96();   // 96 channels
+auto utah128 = ChannelConfig::utah_array_128();  // 128 channels
+auto mcmaze  = ChannelConfig::mc_maze();         // 142 channels (default)
+auto npx1    = ChannelConfig::neuropixels();     // 384 channels
+auto npx2    = ChannelConfig::neuropixels_2();   // 960 channels
+
+// Custom hardware
+auto custom  = ChannelConfig::custom(256, "Custom Array");
+
+// All components accept ChannelConfig
+SpikeDetector detector(config);
+KalmanDecoder decoder(config);
+LinearDecoder linear(config);
+```
+
+| Hardware Preset | Channels | Use Case |
+|-----------------|----------|----------|
+| `UtahArray96` | 96 | Utah microelectrode array |
+| `UtahArray128` | 128 | High-density Utah array |
+| `MCMaze142` | 142 | MC_Maze benchmark dataset |
+| `Neuropixels384` | 384 | Neuropixels 1.0 probe |
+| `Neuropixels960` | 960 | Neuropixels 2.0 probe |
+| `Custom` | Any | User-defined hardware |
 
 ---
 
@@ -162,9 +204,14 @@ Summary:
 
 ### Key Optimizations
 
-- **Kalman Decoder**: Uses Woodbury matrix identity for 4×4 inversion instead of 142×142
+- **Kalman Decoder**: Uses Woodbury matrix identity for 4×4 inversion instead of N×N
+- **PCA Latent Space**: Optional dimensionality reduction (142→15 dims) for faster updates
+- **Ridge Regression**: L2-regularized calibration prevents overfitting on noisy neural data
+- **Bandpass Filtering**: 300-3000Hz IIR filter for spike isolation
 - **SIMD**: AVX2 vectorized spike z-score normalization and dot products
+- **Aligned Memory**: 32-byte aligned allocators for safe SIMD operations
 - **Lock-free**: Ring buffer with atomic operations for deterministic timing
+- **Dynamic Channels**: Runtime hardware configuration without recompilation
 
 ---
 
@@ -177,10 +224,14 @@ PhantomCore/
 ├── include/
 │   ├── phantomcore.hpp         # Main include
 │   └── phantomcore/
-│       ├── types.hpp           # Core data types
+│       ├── types.hpp           # Core data types + ChannelConfig
 │       ├── simd_utils.hpp      # SIMD operations
-│       ├── spike_detector.hpp  # Spike detection
+│       ├── spike_detector.hpp  # Spike detection + bandpass
+│       ├── bandpass_filter.hpp # IIR filtering (300-3000Hz)
 │       ├── kalman_decoder.hpp  # Kalman filter decoder
+│       ├── dimensionality_reduction.hpp  # PCA projector
+│       ├── regularization.hpp  # Ridge/ElasticNet regression
+│       ├── aligned_allocator.hpp  # SIMD-safe memory
 │       ├── stream_client.hpp   # WebSocket client
 │       ├── ring_buffer.hpp     # Lock-free queue
 │       └── latency_tracker.hpp # Timing utilities
@@ -188,6 +239,8 @@ PhantomCore/
 │   ├── simd_utils.cpp
 │   ├── spike_detector.cpp
 │   ├── kalman_decoder.cpp
+│   ├── dimensionality_reduction.cpp
+│   ├── regularization.cpp
 │   └── stream_client.cpp
 ├── examples/
 │   ├── realtime_demo.cpp       # Live streaming demo
@@ -232,15 +285,24 @@ client.send_seek(timestamp);
 ### KalmanDecoder
 
 ```cpp
-KalmanDecoder decoder;
+// Configure for your hardware
+KalmanDecoder::Config config;
+config.channel_config = ChannelConfig::neuropixels();  // 384 channels
+config.use_latent_space = true;   // Enable PCA for faster updates
+config.pca_components = 15;       // Reduce to 15 latent dims
+config.ridge_lambda = 1e-3f;      // Regularization strength
+
+KalmanDecoder decoder(config);
 
 // Decode neural activity to kinematics
-DecoderOutput output = decoder.decode(spike_counts);
+SpikeData spikes(config.channel_config);
+// ... fill spikes ...
+DecoderOutput output = decoder.decode(spikes);
 // output.position.x, output.position.y
 // output.velocity.vx, output.velocity.vy
 // output.processing_time  (typically < 100μs)
 
-// Calibrate from training data
+// Calibrate from training data (with Ridge regularization)
 decoder.calibrate(neural_matrix, kinematics_matrix);
 
 // Save/load trained weights
@@ -253,15 +315,50 @@ decoder.load_weights(weights);
 ```cpp
 using namespace phantomcore::simd;
 
-// Vectorized operations on 142 channels
-float mean = vector_mean(data, NUM_CHANNELS);
-float dot = vector_dot(a, b, NUM_CHANNELS);
+// Dynamic channel operations (runtime size)
+SpikeData data(ChannelConfig::neuropixels());  // 384 channels
+float mean = ChannelProcessor::compute_mean_rate(data);
+
+// Span-based API for flexibility
+std::span<float> rates = data.span();
+ChannelProcessor::compute_zscores(rates, means, stds, result);
+
+// Vectorized operations (any size)
+float dot = vector_dot(a.data(), b.data(), a.size());
 
 // Threshold detection
-threshold_crossing(data, thresholds, crossings, NUM_CHANNELS);
+threshold_crossing(data, thresholds, crossings, num_channels);
+```
 
-// Z-score normalization
-compute_zscores(data, means, stds, result, NUM_CHANNELS);
+### SpikeDetector with Bandpass Filtering
+
+```cpp
+// Configure detector for your hardware
+SpikeDetector::Config config;
+config.bandpass.low_cutoff_hz = 300.0f;   // High-pass for LFP rejection
+config.bandpass.high_cutoff_hz = 3000.0f; // Low-pass for noise
+config.threshold_multiplier = -4.5f;       // Detection threshold
+
+SpikeDetector detector(ChannelConfig::utah_array_96(), config);
+
+// Process raw neural samples
+auto events = detector.process_batch(samples, batch_size, 96, timestamp, 30000.0);
+```
+
+### PCA Dimensionality Reduction
+
+```cpp
+PCAProjector::Config pca_config;
+pca_config.n_components = 15;          // Target latent dims
+pca_config.variance_threshold = 0.95f; // Or use variance explained
+
+PCAProjector pca(pca_config);
+pca.fit(training_data);  // [n_samples x n_channels]
+
+// Transform new data (142 → 15 dims)
+Eigen::VectorXf latent = pca.transform(spike_vector);
+
+std::cout << "Variance explained: " << pca.cumulative_variance_explained() << "\n";
 ```
 
 ---

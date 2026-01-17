@@ -127,9 +127,10 @@ Eigen::VectorXf PCAProjector::transform(const AlignedSpikeData& spikes) const {
         return Eigen::VectorXf();
     }
     
-    // Map aligned data to Eigen vector (no copy)
-    Eigen::Map<const Eigen::VectorXf> sample(spikes.data(), 
-                                              static_cast<Eigen::Index>(NUM_CHANNELS));
+    // Map aligned data to Eigen vector (no copy) - using legacy fixed size
+    Eigen::Map<const Eigen::VectorXf> sample_map(spikes.data(), 
+                                                  static_cast<Eigen::Index>(142));
+    Eigen::VectorXf sample = sample_map;  // Explicit copy to resolve overload
     return transform(sample);
 }
 

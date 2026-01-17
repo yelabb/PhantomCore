@@ -9,19 +9,30 @@ protected:
     void SetUp() override {
         config_.threshold_std = -4.0f;
         config_.use_adaptive_threshold = true;
+        channel_config_ = ChannelConfig::mc_maze();  // 142 channels
     }
     
+    ChannelConfig channel_config_;
     SpikeDetectorConfig config_;
 };
 
 TEST_F(SpikeDetectorTest, CreateDefault) {
     SpikeDetector detector;
-    EXPECT_EQ(detector.get_thresholds().size(), NUM_CHANNELS);
+    EXPECT_EQ(detector.get_thresholds().size(), 142u);  // MC_Maze default
+    EXPECT_EQ(detector.num_channels(), 142u);
+}
+
+TEST_F(SpikeDetectorTest, CreateWithChannelConfig) {
+    // Test with Utah Array (96 channels)
+    SpikeDetector detector(ChannelConfig::utah_array_96());
+    EXPECT_EQ(detector.num_channels(), 96u);
+    EXPECT_EQ(detector.get_thresholds().size(), 96u);
 }
 
 TEST_F(SpikeDetectorTest, CreateWithConfig) {
-    SpikeDetector detector(config_);
+    SpikeDetector detector(channel_config_, config_);
     EXPECT_EQ(detector.config().threshold_std, -4.0f);
+    EXPECT_EQ(detector.num_channels(), 142u);
 }
 
 TEST_F(SpikeDetectorTest, ProcessSpikeCounts) {
@@ -75,7 +86,7 @@ TEST_F(SpikeDetectorTest, StatsTracking) {
     SpikeDetector detector;
     
     SpikeCountArray counts{};
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
+    for (size_t i = 0; i < 142; ++i) {
         counts[i] = 1;
     }
     

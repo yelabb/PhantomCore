@@ -175,9 +175,11 @@ TEST_F(SIMDTest, ExponentialSmooth) {
 
 // Channel Processor Tests
 
+constexpr size_t TEST_CHANNELS = 142;  // MC_Maze default for legacy tests
+
 TEST(ChannelProcessorTest, ComputeMeanRate) {
     AlignedSpikeData spikes;
-    for (size_t i = 0; i < NUM_CHANNELS; ++i) {
+    for (size_t i = 0; i < TEST_CHANNELS; ++i) {
         spikes[i] = 2.0f;
     }
     
@@ -185,11 +187,21 @@ TEST(ChannelProcessorTest, ComputeMeanRate) {
     EXPECT_FLOAT_EQ(mean, 2.0f);
 }
 
+TEST(ChannelProcessorTest, ComputeMeanRateDynamic) {
+    SpikeData spikes(96);  // Utah Array
+    for (size_t i = 0; i < 96; ++i) {
+        spikes[i] = 3.0f;
+    }
+    
+    float mean = ChannelProcessor::compute_mean_rate(spikes);
+    EXPECT_FLOAT_EQ(mean, 3.0f);
+}
+
 TEST(ChannelProcessorTest, ApplyDecoder) {
     AlignedSpikeData spikes;
     spikes.counts.fill(1.0f);
     
-    std::array<float, NUM_CHANNELS> weights_x, weights_y;
+    std::array<float, TEST_CHANNELS> weights_x, weights_y;
     weights_x.fill(0.01f);
     weights_y.fill(0.02f);
     
@@ -201,8 +213,28 @@ TEST(ChannelProcessorTest, ApplyDecoder) {
     );
     
     // Expected: sum(spikes * weights) + bias
-    float expected_x = NUM_CHANNELS * 1.0f * 0.01f + 1.0f;
-    float expected_y = NUM_CHANNELS * 1.0f * 0.02f + 2.0f;
+    float expected_x = TEST_CHANNELS * 1.0f * 0.01f + 1.0f;
+    float expected_y = TEST_CHANNELS * 1.0f * 0.02f + 2.0f;
+    
+    EXPECT_NEAR(result.x, expected_x, 1e-4f);
+    EXPECT_NEAR(result.y, expected_y, 1e-4f);
+}
+
+TEST(ChannelProcessorTest, ApplyDecoderDynamic) {
+    SpikeData spikes(96);
+    std::vector<float> weights_x(96, 0.01f);
+    std::vector<float> weights_y(96, 0.02f);
+    
+    for (size_t i = 0; i < 96; ++i) {
+        spikes[i] = 1.0f;
+    }
+    
+    Vec2 result = ChannelProcessor::apply_decoder(
+        spikes.span(), weights_x, weights_y, 1.0f, 2.0f
+    );
+    
+    float expected_x = 96 * 1.0f * 0.01f + 1.0f;
+    float expected_y = 96 * 1.0f * 0.02f + 2.0f;
     
     EXPECT_NEAR(result.x, expected_x, 1e-4f);
     EXPECT_NEAR(result.y, expected_y, 1e-4f);

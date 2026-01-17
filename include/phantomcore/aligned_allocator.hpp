@@ -6,6 +6,7 @@
 #include <array>
 #include <new>
 #include <type_traits>
+#include <algorithm>  // For std::swap_ranges, std::copy
 
 #ifdef _MSC_VER
 #include <malloc.h>  // _aligned_malloc/_aligned_free

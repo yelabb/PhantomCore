@@ -99,7 +99,8 @@ TEST_F(KalmanDecoderTest, SaveLoadWeights) {
     KalmanDecoder decoder;
     
     auto weights = decoder.save_weights();
-    EXPECT_EQ(weights.size(), KalmanDecoder::OBS_DIM * KalmanDecoder::STATE_DIM);
+    // 142 channels * 4 state dims = 568 weights
+    EXPECT_EQ(weights.size(), decoder.num_channels() * KalmanDecoder::STATE_DIM);
     
     // Modify weights
     std::fill(weights.begin(), weights.end(), 0.5f);
@@ -115,9 +116,10 @@ TEST_F(KalmanDecoderTest, SaveLoadWeights) {
 class LinearDecoderTest : public ::testing::Test {
 protected:
     SpikeCountArray test_spikes_{};
+    static constexpr size_t TEST_CHANNELS = 142;  // MC_Maze default
     
     void SetUp() override {
-        for (size_t i = 0; i < NUM_CHANNELS; ++i) {
+        for (size_t i = 0; i < TEST_CHANNELS; ++i) {
             test_spikes_[i] = static_cast<int32_t>(i % 10);
         }
     }
@@ -139,9 +141,9 @@ TEST_F(LinearDecoderTest, DecodeWithDefaultWeights) {
 }
 
 TEST_F(LinearDecoderTest, DecodeWithCustomWeights) {
-    LinearDecoder::Config config;
-    config.weights_x.fill(0.01f);
-    config.weights_y.fill(0.02f);
+    LinearDecoder::Config config(ChannelConfig::mc_maze());
+    std::fill(config.weights_x.begin(), config.weights_x.end(), 0.01f);
+    std::fill(config.weights_y.begin(), config.weights_y.end(), 0.02f);
     config.bias_x = 1.0f;
     config.bias_y = 2.0f;
     
