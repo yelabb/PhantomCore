@@ -183,6 +183,9 @@ std::vector<SpikeEvent> SpikeDetector::process_spike_counts(
     // Each count > 0 indicates spike activity in that bin
     std::vector<SpikeEvent> events;
     
+    // Increment sample count for stats tracking
+    impl_->sample_count++;
+    
     const size_t num_channels = std::min(spike_counts.size(), impl_->num_channels);
     for (size_t ch = 0; ch < num_channels; ++ch) {
         if (!impl_->channel_enabled[ch]) continue;
