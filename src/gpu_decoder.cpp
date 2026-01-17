@@ -391,11 +391,11 @@ bool GPUDecoder::is_using_gpu() const {
     return impl_->using_gpu;
 }
 
-std::expected<DecoderOutput, GPUError> GPUDecoder::decode(const SpikeData& spike_data) {
+tl::expected<DecoderOutput, GPUError> GPUDecoder::decode(const SpikeData& spike_data) {
     return decode(std::span<const float>(spike_data.data(), spike_data.size()));
 }
 
-std::expected<DecoderOutput, GPUError> GPUDecoder::decode(std::span<const float> spike_counts) {
+tl::expected<DecoderOutput, GPUError> GPUDecoder::decode(std::span<const float> spike_counts) {
     auto start = Clock::now();
     impl_->total_decodes++;
     
@@ -466,7 +466,7 @@ std::expected<DecoderOutput, GPUError> GPUDecoder::decode(std::span<const float>
     return output;
 }
 
-std::expected<std::vector<DecoderOutput>, GPUError> GPUDecoder::decode_batch(
+tl::expected<std::vector<DecoderOutput>, GPUError> GPUDecoder::decode_batch(
     std::span<const float> spike_batch,
     size_t num_samples
 ) {
@@ -479,7 +479,7 @@ std::expected<std::vector<DecoderOutput>, GPUError> GPUDecoder::decode_batch(
         auto sample = spike_batch.subspan(i * channels, channels);
         auto result = decode(sample);
         if (!result) {
-            return std::unexpected(result.error());
+            return tl::unexpected(result.error());
         }
         results.push_back(*result);
     }
@@ -487,31 +487,31 @@ std::expected<std::vector<DecoderOutput>, GPUError> GPUDecoder::decode_batch(
     return results;
 }
 
-std::expected<DecoderOutput, GPUError> GPUDecoder::predict() {
-    return std::expected<DecoderOutput, GPUError>(impl_->cpu_decoder->predict());
+tl::expected<DecoderOutput, GPUError> GPUDecoder::predict() {
+    return tl::expected<DecoderOutput, GPUError>(impl_->cpu_decoder->predict());
 }
 
-std::optional<std::expected<DecoderOutput, GPUError>> GPUDecoder::try_get_result() {
+std::optional<tl::expected<DecoderOutput, GPUError>> GPUDecoder::try_get_result() {
 #ifdef PHANTOMCORE_ENABLE_CUDA
     if (impl_->async_pending) {
         cudaError_t status = cudaEventQuery(impl_->compute_done_event);
         if (status == cudaSuccess) {
             impl_->async_pending = false;
             std::lock_guard<std::mutex> lock(impl_->async_mutex);
-            return std::expected<DecoderOutput, GPUError>(impl_->async_result);
+            return tl::expected<DecoderOutput, GPUError>(impl_->async_result);
         } else if (status != cudaErrorNotReady) {
             impl_->async_pending = false;
-            return std::expected<DecoderOutput, GPUError>(std::unexpected(GPUError::CUDAError));
+            return tl::expected<DecoderOutput, GPUError>(tl::unexpected(GPUError::CUDAError));
         }
     }
 #endif
     return std::nullopt;
 }
 
-std::expected<DecoderOutput, GPUError> GPUDecoder::wait_for_result(uint64_t timeout_us) {
+tl::expected<DecoderOutput, GPUError> GPUDecoder::wait_for_result(uint64_t timeout_us) {
 #ifdef PHANTOMCORE_ENABLE_CUDA
     if (!impl_->async_pending) {
-        return std::unexpected(GPUError::InvalidInput);
+        return tl::unexpected(GPUError::InvalidInput);
     }
     
     if (timeout_us > 0) {
@@ -523,7 +523,7 @@ std::expected<DecoderOutput, GPUError> GPUDecoder::wait_for_result(uint64_t time
             }
             auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
             if (static_cast<uint64_t>(elapsed) >= timeout_us) {
-                return std::unexpected(GPUError::Timeout);
+                return tl::unexpected(GPUError::Timeout);
             }
             std::this_thread::yield();
         }
@@ -534,7 +534,7 @@ std::expected<DecoderOutput, GPUError> GPUDecoder::wait_for_result(uint64_t time
         return impl_->async_result;
     }
 #endif
-    return std::unexpected(GPUError::UnsupportedOperation);
+    return tl::unexpected(GPUError::UnsupportedOperation);
 }
 
 KalmanDecoder::CalibrationResult GPUDecoder::calibrate(
@@ -667,11 +667,11 @@ MultiProbeDecoder::~MultiProbeDecoder() = default;
 MultiProbeDecoder::MultiProbeDecoder(MultiProbeDecoder&&) noexcept = default;
 MultiProbeDecoder& MultiProbeDecoder::operator=(MultiProbeDecoder&&) noexcept = default;
 
-std::expected<DecoderOutput, GPUError> MultiProbeDecoder::decode(
+tl::expected<DecoderOutput, GPUError> MultiProbeDecoder::decode(
     const std::vector<SpikeData>& probe_data
 ) {
     if (probe_data.size() != impl_->probe_decoders.size()) {
-        return std::unexpected(GPUError::InvalidInput);
+        return tl::unexpected(GPUError::InvalidInput);
     }
     
     std::vector<DecoderOutput> outputs;
@@ -681,7 +681,7 @@ std::expected<DecoderOutput, GPUError> MultiProbeDecoder::decode(
     for (size_t i = 0; i < probe_data.size(); ++i) {
         auto result = impl_->probe_decoders[i]->decode(probe_data[i]);
         if (!result) {
-            return std::unexpected(result.error());
+            return tl::unexpected(result.error());
         }
         outputs.push_back(*result);
     }

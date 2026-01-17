@@ -90,6 +90,11 @@ KalmanDecoder::KalmanDecoder(const ChannelConfig& channel_config) {
     *this = KalmanDecoder(cfg);
 }
 
+KalmanDecoder::KalmanDecoder() {
+    Config cfg;
+    *this = KalmanDecoder(cfg);
+}
+
 KalmanDecoder::~KalmanDecoder() = default;
 KalmanDecoder::KalmanDecoder(KalmanDecoder&&) noexcept = default;
 KalmanDecoder& KalmanDecoder::operator=(KalmanDecoder&&) noexcept = default;
@@ -569,6 +574,11 @@ LinearDecoder::LinearDecoder(const Config& config)
 
 LinearDecoder::LinearDecoder(const ChannelConfig& channel_config)
     : LinearDecoder(Config(channel_config)) {}
+
+LinearDecoder::LinearDecoder() {
+    Config cfg;
+    *this = LinearDecoder(cfg);
+}
 
 // Primary decode with SpikeData
 DecoderOutput LinearDecoder::decode(const SpikeData& spike_data) {

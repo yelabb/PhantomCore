@@ -277,6 +277,9 @@ SpikeSorter::SpikeSorter(const Config& config)
     impl_->cluster_centroids.resize(config.num_clusters);
 }
 
+SpikeSorter::SpikeSorter()
+    : SpikeSorter(Config()) {}
+
 SpikeSorter::~SpikeSorter() = default;
 
 void SpikeSorter::add_waveform(const Waveform& waveform) {
