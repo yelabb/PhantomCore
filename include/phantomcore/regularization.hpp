@@ -30,6 +30,8 @@ public:
         float lambda = 1.0f;              // Regularization strength
         bool fit_intercept = true;        // Learn bias term
         bool normalize = false;           // Normalize features before fitting
+        
+        Config() = default;
     };
     
     struct CVResult {
@@ -39,7 +41,7 @@ public:
         std::vector<float> cv_scores;
     };
     
-    explicit RidgeRegression(const Config& config = {});
+    explicit RidgeRegression(const Config& config = Config{});
     ~RidgeRegression();
     
     RidgeRegression(RidgeRegression&&) noexcept;
@@ -116,9 +118,11 @@ public:
         size_t max_iterations = 1000;
         float tolerance = 1e-4f;
         bool fit_intercept = true;
+        
+        Config() = default;
     };
     
-    explicit ElasticNet(const Config& config = {});
+    explicit ElasticNet(const Config& config = Config{});
     ~ElasticNet();
     
     bool fit(const Eigen::MatrixXf& X, const Eigen::VectorXf& y);
@@ -159,9 +163,11 @@ public:
         float tolerance = 1e-3f;
         float alpha_init = 1.0f;   // Prior precision on weights
         float lambda_init = 1.0f;  // Prior precision on noise
+        
+        Config() = default;
     };
     
-    explicit BayesianRidge(const Config& config = {});
+    explicit BayesianRidge(const Config& config = Config{});
     ~BayesianRidge();
     
     BayesianRidge(BayesianRidge&&) noexcept;

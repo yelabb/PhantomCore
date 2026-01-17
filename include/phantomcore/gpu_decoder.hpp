@@ -122,9 +122,11 @@ public:
         
         /// Kalman decoder configuration
         KalmanDecoder::Config kalman_config;
+        
+        Config() = default;
     };
     
-    explicit GPUDecoder(const Config& config = {});
+    explicit GPUDecoder(const Config& config = Config{});
     ~GPUDecoder();
     
     // Non-copyable, movable

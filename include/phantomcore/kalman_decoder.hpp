@@ -80,9 +80,11 @@ public:
         // === Regularization ===
         float ridge_lambda = 1.0f;            // Ridge regularization strength
         bool auto_tune_lambda = true;         // Cross-validate to find optimal λ
+        
+        Config() = default;
     };
     
-    explicit KalmanDecoder(const Config& config = {});
+    explicit KalmanDecoder(const Config& config = Config{});
     
     /// Convenience constructor with channel config
     explicit KalmanDecoder(const ChannelConfig& channel_config);
@@ -320,7 +322,7 @@ public:
             , weights_y(ch_config.num_channels, 0.0f) {}
     };
     
-    explicit LinearDecoder(const Config& config = {});
+    explicit LinearDecoder(const Config& config = Config{});
     explicit LinearDecoder(const ChannelConfig& channel_config);
     
     /**
@@ -374,9 +376,11 @@ public:
         StateMatrix process_noise = StateMatrix::Identity() * 0.1f;
         float measurement_noise = 0.5f;
         float dt = 1.0f / 40.0f;
+        
+        Config() = default;
     };
     
-    explicit VelocityKalmanDecoder(const Config& config = {});
+    explicit VelocityKalmanDecoder(const Config& config = Config{});
     
     DecoderOutput decode(const SpikeCountArray& spike_counts);
     void reset();

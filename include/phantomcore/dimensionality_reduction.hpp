@@ -35,9 +35,11 @@ public:
         bool use_variance_threshold = false; // If true, ignore n_components
         bool center = true;                  // Subtract mean
         bool scale = false;                  // Divide by std (standardize)
+        
+        Config() = default;
     };
     
-    explicit PCAProjector(const Config& config = {});
+    explicit PCAProjector(const Config& config = Config{});
     ~PCAProjector();
     
     // Move-only
@@ -148,9 +150,11 @@ public:
         size_t n_factors = 15;
         size_t max_iterations = 100;
         float tolerance = 1e-4f;
+        
+        Config() = default;
     };
     
-    explicit FactorAnalysis(const Config& config = {});
+    explicit FactorAnalysis(const Config& config = Config{});
     ~FactorAnalysis();
     
     FactorAnalysis(FactorAnalysis&&) noexcept;

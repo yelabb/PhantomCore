@@ -361,9 +361,11 @@ public:
         size_t window_size = 100;           // Samples for running stats
         size_t baseline_window = 1000;      // Samples for baseline
         float kl_divergence_threshold = 0.5f;
+        
+        Config() = default;
     };
     
-    explicit FiringRateMonitor(const Config& config = {});
+    explicit FiringRateMonitor(const Config& config = Config{});
     ~FiringRateMonitor();
     
     /**

@@ -146,9 +146,11 @@ public:
         size_t pca_components = 3;        // PCA dimensions
         size_t max_waveforms = 10000;     // Max waveforms for training
         double convergence_threshold = 0.001;
+        
+        Config() = default;
     };
     
-    explicit SpikeSorter(const Config& config = {});
+    explicit SpikeSorter(const Config& config = Config{});
     ~SpikeSorter();
     
     /**

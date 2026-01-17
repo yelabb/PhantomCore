@@ -168,9 +168,11 @@ public:
         
         /// Inference timeout (microseconds, 0 = no timeout)
         uint64_t inference_timeout_us = 1000;  // 1ms default
+        
+        Config() = default;
     };
     
-    explicit NeuralNetDecoder(const Config& config = {});
+    explicit NeuralNetDecoder(const Config& config = Config{});
     ~NeuralNetDecoder();
     
     // Non-copyable, movable

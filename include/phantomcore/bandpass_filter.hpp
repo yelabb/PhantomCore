@@ -58,9 +58,11 @@ public:
         float low_cutoff = 300.0f;      // Hz (removes LFP, motion artifacts)
         float high_cutoff = 3000.0f;    // Hz (removes high-freq noise)
         uint8_t order = 4;              // Filter order (must be 2 or 4)
+        
+        Config() = default;
     };
     
-    explicit ButterworthBandpass(const Config& config = {}) 
+    explicit ButterworthBandpass(const Config& config = Config{}) 
         : config_(config) {
         design_filter();
     }
