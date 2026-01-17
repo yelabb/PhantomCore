@@ -12,7 +12,7 @@
 
 **Ultra-Low-Latency Neural Signal Processing Library**
 
-[![C++20](https://img.shields.io/badge/C++-20-blue.svg)](https://isocpp.org/)
+[![C++23](https://img.shields.io/badge/C++-23-blue.svg)](https://isocpp.org/)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-green.svg)](https://cmake.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PhantomLink](https://img.shields.io/badge/Works_with-PhantomLink-009688.svg)](https://github.com/yelabb/PhantomLink)
@@ -292,7 +292,7 @@ LinearDecoder linear(config);
 
 ### Prerequisites
 
-- **C++20** compiler (GCC 11+, Clang 13+, MSVC 2022+)
+- **C++23** compiler (GCC 13+, Clang 17+, MSVC 2022+)
 - **CMake** 3.20+
 - **Git** (for FetchContent dependencies)
 
