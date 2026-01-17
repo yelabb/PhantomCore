@@ -27,7 +27,8 @@
 
 PhantomCore is a high-performance C++ library for real-time neural signal processing. Designed for closed-loop BCI systems where every microsecond matters, it delivers:
 
-- **< 100μs** decode latency (Kalman filter, 142 channels)
+- **< 15μs** full pipeline latency (spike detection + Kalman decode)
+- **~4μs** Kalman decoder (Woodbury-optimized, 142 channels → 2D cursor)
 - **SIMD-optimized** signal processing (AVX2/NEON)
 - **Lock-free** data structures for deterministic timing
 - **Direct integration** with PhantomLink streaming server
@@ -82,13 +83,13 @@ int main() {
 
 ### Core Components
 
-| Component | Description | Latency |
-|-----------|-------------|---------|
-| `StreamClient` | WebSocket client with MessagePack | ~50μs |
-| `SpikeDetector` | Threshold crossing detection | ~10μs |
-| `KalmanDecoder` | State-space neural decoder | ~80μs |
-| `LinearDecoder` | Simple linear regression | ~5μs |
-| `RingBuffer` | Lock-free SPSC queue | ~0.1μs |
+| Component | Description | Mean Latency |
+|-----------|-------------|--------------|
+| `StreamClient` | WebSocket client for PhantomLink | ~10μs |
+| `SpikeDetector` | Threshold crossing detection | ~13μs |
+| `KalmanDecoder` | Woodbury-optimized state-space decoder | ~4μs |
+| `LinearDecoder` | Simple linear regression | ~0.5μs |
+| `RingBuffer` | Lock-free SPSC queue | ~0.05μs |
 
 ---
 
@@ -130,27 +131,40 @@ cmake --build build --config Release
 
 ## 📊 Performance
 
-Benchmarks on Intel i9-12900K, Windows 11, MSVC 2022:
+**Actual benchmarks** on Intel Core i9, Windows 11, MSVC 2022, AVX2 enabled:
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                    PhantomCore Latency Benchmark Suite                        ║
+║                    Sub-Millisecond Neural Processing                          ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-Benchmark                         Iters    Mean(μs)    Std(μs)    P99(μs)
-─────────────────────────────────────────────────────────────────────────────────
-SIMD Dot Product (142-dim)        10000        0.12       0.05       0.35
-SIMD Z-Score (142 ch)             10000        0.18       0.06       0.42
-Ring Buffer Push+Pop              10000        0.08       0.02       0.15
-Spike Detector                    10000       12.50       3.20      25.00
-Linear Decoder                    10000        4.80       1.50      10.00
-Kalman Decoder                    10000       78.30      15.40     120.00
-Full Pipeline (Detect+Decode)     10000       95.00      18.00     150.00
-─────────────────────────────────────────────────────────────────────────────────
+Build: PhantomCore v0.1.0
+SIMD: AVX2 (256-bit)
 
-✓ SUB-MILLISECOND closed-loop latency achieved!
-✓ P99 total loop: 0.15 ms
+Benchmark                         Iters    Mean(μs)    Std(μs)    P99(μs)    Max(μs)
+─────────────────────────────────────────────────────────────────────────────────────
+SIMD Dot Product (142-dim)        10000        0.06       0.11       0.10       8.10
+SIMD Z-Score (142 ch)             10000        0.15       2.39       0.20     236.40
+Ring Buffer Push+Pop              10000        0.05       0.05       0.10       0.30
+Spike Detector                    10000       12.92     130.16      64.80    8210.40
+Linear Decoder                    10000        0.51       4.24       0.60     414.70
+Kalman Decoder                    10000        3.99      27.59      33.10    2189.70
+Full Pipeline (Detect+Decode)     10000       14.39      97.96      36.00    7866.80
+─────────────────────────────────────────────────────────────────────────────────────
+
+Summary:
+  Full Pipeline Mean:    14.39 μs ✓ SUB-MILLISECOND
+  Full Pipeline P99:     36.00 μs ✓ SUB-MILLISECOND
+  Throughput:            69,509 packets/sec
+  Real-time Headroom:    1738x (at 40Hz streaming)
 ```
+
+### Key Optimizations
+
+- **Kalman Decoder**: Uses Woodbury matrix identity for 4×4 inversion instead of 142×142
+- **SIMD**: AVX2 vectorized spike z-score normalization and dot products
+- **Lock-free**: Ring buffer with atomic operations for deterministic timing
 
 ---
 
