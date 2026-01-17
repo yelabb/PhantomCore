@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: 'Run benchmarks'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            cmake_generator: "Unix Makefiles"
+          - os: windows-latest
+            cmake_generator: "Visual Studio 17 2022"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPHANTOMCORE_BUILD_TESTS=ON \
+            -DPHANTOMCORE_BUILD_EXAMPLES=ON \
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON \
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B build `
+            -G "${{ matrix.cmake_generator }}" `
+            -DPHANTOMCORE_BUILD_TESTS=ON `
+            -DPHANTOMCORE_BUILD_EXAMPLES=ON `
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON `
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run Tests
+        run: ctest --test-dir build --build-config Release --output-on-failure --parallel
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_benchmarks == 'true'
+    needs: build-and-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPHANTOMCORE_BUILD_TESTS=OFF \
+            -DPHANTOMCORE_BUILD_EXAMPLES=OFF \
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON \
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Build Benchmarks
+        run: cmake --build build --config Release --target phantomcore_benchmarks --parallel
+
+      - name: Run Benchmarks
+        run: ./build/phantomcore_benchmarks --benchmark_format=console --benchmark_out=benchmark_results.json --benchmark_out_format=json
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results.json
