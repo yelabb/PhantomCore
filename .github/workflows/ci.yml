@@ -60,6 +60,32 @@ jobs:
       - name: Run Tests
         run: ctest --test-dir build --build-config Release --output-on-failure --parallel
 
+      - name: Upload Build Artifacts (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantomcore-linux-x64
+          path: |
+            build/closed_loop_sim
+            build/latency_benchmark
+            build/realtime_demo
+            build/spike_visualizer
+            build/phantomcore_benchmarks
+            build/libphantomcore.a
+          retention-days: 30
+
+      - name: Upload Build Artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantomcore-windows-x64
+          path: |
+            build/Release/*.exe
+            build/Release/*.lib
+            build/examples/Release/*.exe
+            build/benchmarks/Release/*.exe
+          retention-days: 30
+
   benchmarks:
     name: Benchmarks
     runs-on: ubuntu-latest

@@ -1,0 +1,225 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: PhantomCore ${{ steps.get_version.outputs.version }}
+          draft: false
+          prerelease: false
+          body: |
+            ## PhantomCore ${{ steps.get_version.outputs.version }}
+            
+            ### Downloads
+            - **Windows**: PhantomCore-${{ steps.get_version.outputs.version }}-Windows-x64.zip
+            - **Linux**: PhantomCore-${{ steps.get_version.outputs.version }}-Linux-x64.tar.gz
+            - **macOS**: PhantomCore-${{ steps.get_version.outputs.version }}-macOS-x64.tar.gz
+            
+            ### Installation
+            1. Download the appropriate archive for your platform
+            2. Extract the archive
+            3. Add the `bin` directory to your PATH
+            
+            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for usage instructions.
+
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+    needs: create-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Configure
+        run: |
+          cmake -B build `
+            -G "Visual Studio 17 2022" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DPHANTOMCORE_BUILD_TESTS=OFF `
+            -DPHANTOMCORE_BUILD_EXAMPLES=ON `
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON `
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Path package\bin
+          New-Item -ItemType Directory -Path package\lib
+          New-Item -ItemType Directory -Path package\include
+          
+          # Copy executables
+          Copy-Item build\Release\*.exe package\bin\ -ErrorAction SilentlyContinue
+          Copy-Item build\examples\Release\*.exe package\bin\ -ErrorAction SilentlyContinue
+          Copy-Item build\benchmarks\Release\*.exe package\bin\ -ErrorAction SilentlyContinue
+          
+          # Copy library
+          Copy-Item build\Release\*.lib package\lib\ -ErrorAction SilentlyContinue
+          Copy-Item build\lib\Release\*.lib package\lib\ -ErrorAction SilentlyContinue
+          
+          # Copy headers
+          Copy-Item -Recurse include\* package\include\
+          
+          # Copy documentation
+          Copy-Item README.md package\
+          Copy-Item LICENSE package\
+          Copy-Item CHANGELOG.md package\ -ErrorAction SilentlyContinue
+          
+          # Create archive
+          Compress-Archive -Path package\* -DestinationPath PhantomCore-${{ needs.create-release.outputs.version }}-Windows-x64.zip
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./PhantomCore-${{ needs.create-release.outputs.version }}-Windows-x64.zip
+          asset_name: PhantomCore-${{ needs.create-release.outputs.version }}-Windows-x64.zip
+          asset_content_type: application/zip
+
+  build-linux:
+    name: Build Linux Release
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPHANTOMCORE_BUILD_TESTS=OFF \
+            -DPHANTOMCORE_BUILD_EXAMPLES=ON \
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON \
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        run: |
+          mkdir -p package/bin
+          mkdir -p package/lib
+          mkdir -p package/include
+          
+          # Copy executables
+          find build -maxdepth 2 -type f -executable -exec cp {} package/bin/ \; 2>/dev/null || true
+          find build/examples -maxdepth 1 -type f -executable -exec cp {} package/bin/ \; 2>/dev/null || true
+          find build/benchmarks -maxdepth 1 -type f -executable -exec cp {} package/bin/ \; 2>/dev/null || true
+          
+          # Copy library
+          find build -name "*.a" -exec cp {} package/lib/ \; 2>/dev/null || true
+          find build -name "*.so*" -exec cp {} package/lib/ \; 2>/dev/null || true
+          
+          # Copy headers
+          cp -r include/* package/include/
+          
+          # Copy documentation
+          cp README.md LICENSE package/
+          cp CHANGELOG.md package/ 2>/dev/null || true
+          
+          # Create archive
+          tar -czf PhantomCore-${{ needs.create-release.outputs.version }}-Linux-x64.tar.gz -C package .
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./PhantomCore-${{ needs.create-release.outputs.version }}-Linux-x64.tar.gz
+          asset_name: PhantomCore-${{ needs.create-release.outputs.version }}-Linux-x64.tar.gz
+          asset_content_type: application/gzip
+
+  build-macos:
+    name: Build macOS Release
+    runs-on: macos-latest
+    needs: create-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPHANTOMCORE_BUILD_TESTS=OFF \
+            -DPHANTOMCORE_BUILD_EXAMPLES=ON \
+            -DPHANTOMCORE_BUILD_BENCHMARKS=ON \
+            -DPHANTOMCORE_ENABLE_SIMD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        run: |
+          mkdir -p package/bin
+          mkdir -p package/lib
+          mkdir -p package/include
+          
+          # Copy executables
+          find build -maxdepth 2 -type f -perm +111 -exec cp {} package/bin/ \; 2>/dev/null || true
+          find build/examples -maxdepth 1 -type f -perm +111 -exec cp {} package/bin/ \; 2>/dev/null || true
+          find build/benchmarks -maxdepth 1 -type f -perm +111 -exec cp {} package/bin/ \; 2>/dev/null || true
+          
+          # Copy library
+          find build -name "*.a" -exec cp {} package/lib/ \; 2>/dev/null || true
+          find build -name "*.dylib" -exec cp {} package/lib/ \; 2>/dev/null || true
+          
+          # Copy headers
+          cp -r include/* package/include/
+          
+          # Copy documentation
+          cp README.md LICENSE package/
+          cp CHANGELOG.md package/ 2>/dev/null || true
+          
+          # Create archive
+          tar -czf PhantomCore-${{ needs.create-release.outputs.version }}-macOS-x64.tar.gz -C package .
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./PhantomCore-${{ needs.create-release.outputs.version }}-macOS-x64.tar.gz
+          asset_name: PhantomCore-${{ needs.create-release.outputs.version }}-macOS-x64.tar.gz
+          asset_content_type: application/gzip
