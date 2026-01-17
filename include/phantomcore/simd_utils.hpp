@@ -1,5 +1,19 @@
 #pragma once
 
+// Include SIMD headers FIRST before any other includes
+#ifdef PHANTOMCORE_SIMD_ENABLED
+    #if defined(_MSC_VER)
+        #include <intrin.h>
+    #endif
+    #if defined(__AVX2__) || (defined(_MSC_VER) && defined(__AVX2__))
+        #define PHANTOMCORE_HAS_AVX2 1
+        #include <immintrin.h>
+    #elif defined(__ARM_NEON)
+        #define PHANTOMCORE_HAS_NEON 1
+        #include <arm_neon.h>
+    #endif
+#endif
+
 #include "types.hpp"
 #include <array>
 #include <cstddef>
@@ -11,16 +25,6 @@ namespace simd {
 // ============================================================================
 // SIMD Detection and Configuration
 // ============================================================================
-
-#ifdef PHANTOMCORE_SIMD_ENABLED
-    #if defined(__AVX2__)
-        #define PHANTOMCORE_HAS_AVX2 1
-        #include <immintrin.h>
-    #elif defined(__ARM_NEON)
-        #define PHANTOMCORE_HAS_NEON 1
-        #include <arm_neon.h>
-    #endif
-#endif
 
 /// Returns true if AVX2 is available at runtime
 bool has_avx2();

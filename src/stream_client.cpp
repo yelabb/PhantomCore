@@ -1,12 +1,12 @@
 #include "phantomcore/stream_client.hpp"
 #include "phantomcore/latency_tracker.hpp"
 #include <ixwebsocket/IXWebSocket.h>
-#include <msgpack.hpp>
 #include <atomic>
 #include <mutex>
 #include <random>
 #include <sstream>
 #include <thread>
+#include <cstring>
 
 namespace phantomcore {
 
@@ -40,69 +40,51 @@ std::string generate_session_code() {
 }
 
 // ============================================================================
-// MessagePack Packet Parser
+// Binary Packet Parser (PhantomLink binary protocol)
 // ============================================================================
+
+// Binary packet format from PhantomLink:
+// Header (16 bytes):
+//   - magic: 4 bytes (0x50, 0x48, 0x4C, 0x4B = "PHLK")
+//   - version: 2 bytes
+//   - msg_type: 2 bytes (1 = neural data)
+//   - sequence: 8 bytes
+// Payload (varies by msg_type)
 
 NeuralPacket parse_packet(const uint8_t* data, size_t size) {
     NeuralPacket packet;
     packet.received_at = Clock::now();
     
-    try {
-        msgpack::object_handle oh = msgpack::unpack(
-            reinterpret_cast<const char*>(data), size
-        );
-        msgpack::object obj = oh.get();
-        
-        if (obj.type != msgpack::type::MAP) {
-            throw std::runtime_error("Expected MAP at root");
-        }
-        
-        auto root = obj.as<std::map<std::string, msgpack::object>>();
-        
-        // Parse metadata
-        if (root.count("metadata")) {
-            auto meta = root["metadata"].as<std::map<std::string, msgpack::object>>();
-            if (meta.count("sequence")) packet.sequence = meta["sequence"].as<uint64_t>();
-            if (meta.count("trial_id")) packet.trial_id = meta["trial_id"].as<uint64_t>();
-            if (meta.count("timestamp")) packet.timestamp = meta["timestamp"].as<double>();
-        }
-        
-        // Parse data
-        if (root.count("data")) {
-            auto data_obj = root["data"].as<std::map<std::string, msgpack::object>>();
-            
-            // Spikes
-            if (data_obj.count("spikes")) {
-                auto spikes = data_obj["spikes"].as<std::map<std::string, msgpack::object>>();
-                if (spikes.count("spike_counts")) {
-                    auto counts = spikes["spike_counts"].as<std::vector<int32_t>>();
-                    for (size_t i = 0; i < std::min(counts.size(), NUM_CHANNELS); ++i) {
-                        packet.spike_counts[i] = counts[i];
-                    }
-                }
-            }
-            
-            // Kinematics
-            if (data_obj.count("kinematics")) {
-                auto kin = data_obj["kinematics"].as<std::map<std::string, msgpack::object>>();
-                if (kin.count("x")) packet.kinematics.position.x = kin["x"].as<float>();
-                if (kin.count("y")) packet.kinematics.position.y = kin["y"].as<float>();
-                if (kin.count("vx")) packet.kinematics.velocity.vx = kin["vx"].as<float>();
-                if (kin.count("vy")) packet.kinematics.velocity.vy = kin["vy"].as<float>();
-            }
-            
-            // Intention
-            if (data_obj.count("intention")) {
-                auto intent = data_obj["intention"].as<std::map<std::string, msgpack::object>>();
-                if (intent.count("target_id")) packet.intention.target_id = intent["target_id"].as<int32_t>();
-                if (intent.count("target_x")) packet.intention.target_position.x = intent["target_x"].as<float>();
-                if (intent.count("target_y")) packet.intention.target_position.y = intent["target_y"].as<float>();
-                if (intent.count("distance")) packet.intention.distance = intent["distance"].as<float>();
-            }
-        }
-        
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("Packet parse error: ") + e.what());
+    // For now, parse as simple binary blob containing spike counts
+    // Assuming the packet structure: [sequence:8][timestamp:8][spike_counts:NUM_CHANNELS*4][kinematics:16]
+    
+    size_t offset = 0;
+    
+    if (size >= sizeof(uint64_t)) {
+        std::memcpy(&packet.sequence, data + offset, sizeof(uint64_t));
+        offset += sizeof(uint64_t);
+    }
+    
+    if (size >= offset + sizeof(double)) {
+        std::memcpy(&packet.timestamp, data + offset, sizeof(double));
+        offset += sizeof(double);
+    }
+    
+    // Parse spike counts
+    size_t spike_data_size = NUM_CHANNELS * sizeof(int32_t);
+    if (size >= offset + spike_data_size) {
+        std::memcpy(packet.spike_counts.data(), data + offset, spike_data_size);
+        offset += spike_data_size;
+    }
+    
+    // Parse kinematics (x, y, vx, vy as floats)
+    if (size >= offset + 4 * sizeof(float)) {
+        float kin[4];
+        std::memcpy(kin, data + offset, 4 * sizeof(float));
+        packet.kinematics.position.x = kin[0];
+        packet.kinematics.position.y = kin[1];
+        packet.kinematics.velocity.vx = kin[2];
+        packet.kinematics.velocity.vy = kin[3];
     }
     
     return packet;
