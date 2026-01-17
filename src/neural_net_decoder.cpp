@@ -1,6 +1,7 @@
 #include "phantomcore/neural_net_decoder.hpp"
 #include "phantomcore/latency_tracker.hpp"
-#include <deque>
+#include <array>
+#include <span>
 #include <mutex>
 #include <atomic>
 #include <sstream>
@@ -90,9 +91,51 @@ struct NeuralNetDecoder::Impl {
     bool model_loaded = false;
     NNModelInfo model_info;
     
-    // Sequence buffer for recurrent models
-    std::deque<std::vector<float>> sequence_buffer;
+    // Sequence buffer for recurrent models (pre-allocated circular buffer)
+    // PERF: Using fixed array + index instead of std::deque to avoid allocations in hot path
+    static constexpr size_t MAX_SEQUENCE_CAPACITY = 64;  // Power of 2 for efficient modulo
+    std::array<std::vector<float>, MAX_SEQUENCE_CAPACITY> sequence_buffer;
+    size_t sequence_head = 0;      // Next write position
+    size_t sequence_count = 0;     // Current number of valid samples
     size_t max_sequence_length = 20;
+    bool sequence_buffer_initialized = false;
+    
+    void init_sequence_buffer(size_t num_channels) {
+        if (!sequence_buffer_initialized) {
+            for (auto& sample : sequence_buffer) {
+                sample.resize(num_channels, 0.0f);
+            }
+            sequence_buffer_initialized = true;
+        }
+    }
+    
+    void push_to_sequence(std::span<const float> sample) {
+        // Copy into pre-allocated slot (no allocation)
+        auto& slot = sequence_buffer[sequence_head];
+        std::copy(sample.begin(), sample.end(), slot.begin());
+        
+        sequence_head = (sequence_head + 1) % MAX_SEQUENCE_CAPACITY;
+        if (sequence_count < max_sequence_length) {
+            sequence_count++;
+        }
+    }
+    
+    void clear_sequence() {
+        sequence_head = 0;
+        sequence_count = 0;
+    }
+    
+    // Iterator over valid sequence samples (oldest to newest)
+    template<typename Func>
+    void for_each_sequence_sample(Func&& func) const {
+        if (sequence_count == 0) return;
+        
+        size_t start_idx = (sequence_head + MAX_SEQUENCE_CAPACITY - sequence_count) % MAX_SEQUENCE_CAPACITY;
+        for (size_t i = 0; i < sequence_count; ++i) {
+            size_t idx = (start_idx + i) % MAX_SEQUENCE_CAPACITY;
+            func(sequence_buffer[idx]);
+        }
+    }
     
     // Hybrid mode
     std::unique_ptr<KalmanDecoder> kalman;
@@ -390,7 +433,7 @@ void NeuralNetDecoder::unload_model() {
     impl_->output_names.clear();
 #endif
     impl_->model_loaded = false;
-    impl_->sequence_buffer.clear();
+    impl_->clear_sequence();
 }
 
 std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(const SpikeData& spike_data) {
@@ -405,19 +448,18 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
 #ifdef PHANTOMCORE_ENABLE_ONNX
     // For recurrent models, update sequence buffer
     if (impl_->model_info.sequence_length > 1) {
-        std::vector<float> sample(spike_counts.begin(), spike_counts.end());
-        impl_->sequence_buffer.push_back(std::move(sample));
+        // Ensure sequence buffer is initialized (one-time allocation at startup)
+        impl_->init_sequence_buffer(spike_counts.size());
         
-        while (impl_->sequence_buffer.size() > impl_->max_sequence_length) {
-            impl_->sequence_buffer.pop_front();
-        }
+        // Push to circular buffer (no allocation)
+        impl_->push_to_sequence(spike_counts);
         
-        // Flatten sequence for input
+        // Flatten sequence for input (reuse pre-allocated input_buffer when possible)
         std::vector<float> sequence_input;
-        sequence_input.reserve(impl_->sequence_buffer.size() * spike_counts.size());
-        for (const auto& sample : impl_->sequence_buffer) {
+        sequence_input.reserve(impl_->sequence_count * spike_counts.size());
+        impl_->for_each_sequence_sample([&](const std::vector<float>& sample) {
             sequence_input.insert(sequence_input.end(), sample.begin(), sample.end());
-        }
+        });
         
         auto nn_result = impl_->run_inference(sequence_input);
         
@@ -526,11 +568,11 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::predict() {
     }
     
     // For recurrent models, run inference on current sequence
-    if (!impl_->sequence_buffer.empty()) {
+    if (impl_->sequence_count > 0) {
         std::vector<float> sequence_input;
-        for (const auto& sample : impl_->sequence_buffer) {
+        impl_->for_each_sequence_sample([&](const std::vector<float>& sample) {
             sequence_input.insert(sequence_input.end(), sample.begin(), sample.end());
-        }
+        });
         
 #ifdef PHANTOMCORE_ENABLE_ONNX
         return impl_->run_inference(sequence_input);
@@ -541,7 +583,7 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::predict() {
 }
 
 void NeuralNetDecoder::reset() {
-    impl_->sequence_buffer.clear();
+    impl_->clear_sequence();
     
     if (impl_->kalman) {
         impl_->kalman->reset();
@@ -549,20 +591,16 @@ void NeuralNetDecoder::reset() {
 }
 
 void NeuralNetDecoder::push_sample(const SpikeData& spike_data) {
-    std::vector<float> sample(spike_data.data(), spike_data.data() + spike_data.size());
-    impl_->sequence_buffer.push_back(std::move(sample));
-    
-    while (impl_->sequence_buffer.size() > impl_->max_sequence_length) {
-        impl_->sequence_buffer.pop_front();
-    }
+    impl_->init_sequence_buffer(spike_data.size());
+    impl_->push_to_sequence(std::span<const float>(spike_data.data(), spike_data.size()));
 }
 
 size_t NeuralNetDecoder::current_sequence_length() const {
-    return impl_->sequence_buffer.size();
+    return impl_->sequence_count;
 }
 
 void NeuralNetDecoder::clear_sequence() {
-    impl_->sequence_buffer.clear();
+    impl_->clear_sequence();
 }
 
 void NeuralNetDecoder::set_nn_weight(float nn_weight) {

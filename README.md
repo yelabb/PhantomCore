@@ -27,11 +27,13 @@
 
 PhantomCore is a high-performance C++ library for real-time neural signal processing. Designed for closed-loop BCI systems where every microsecond matters, it delivers:
 
-- **< 15μs** full pipeline latency (spike detection + Kalman decode)
+- **< 15μs** computational latency (spike detection + Kalman decode, see [benchmark notes](#-performance))
 - **~4μs** Kalman decoder (Woodbury-optimized, 142 channels → 2D cursor)
 - **SIMD-optimized** signal processing (AVX2/NEON)
 - **Lock-free** data structures for deterministic timing
 - **Direct integration** with PhantomLink streaming server
+
+> **Note**: PhantomCore is a *signal processing library*, not a complete BCI stack. Hardware drivers and data acquisition require external tools. See [Scope & Limitations](#%EF%B8%8F-scope--limitations).
 
 ### Advanced Capabilities
 
@@ -298,7 +300,7 @@ LinearDecoder linear(config);
 
 ```bash
 # Clone the repository
-cd NeuraLink/PhantomCore
+cd PhantomCore
 
 # Configure with CMake (core library)
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -379,6 +381,17 @@ Summary:
   Throughput:            69,509 packets/sec
   Real-time Headroom:    1738x (at 40Hz streaming)
 ```
+
+> ⚠️ **Benchmark Methodology Notes**
+>
+> These benchmarks measure **computational latency only** under ideal conditions:
+> - Input is pre-binned spike counts (not raw 30kHz samples)
+> - Does not include I/O, network transport, or hardware acquisition time
+> - Cache is warmed before measurement (100 iterations)
+> - No OS scheduling jitter or interrupt handling
+> - Real-world latency will be higher and depends on your hardware, system load, and data acquisition pipeline
+>
+> For end-to-end latency including PhantomLink network transport, expect an additional 100-500μs depending on network conditions.
 
 ### Key Optimizations
 
@@ -652,6 +665,49 @@ PhantomCore completes the Phantom trilogy:
        └──────────▶ PhantomLoop ◀──────────────┘
                    (Visualization)
 ```
+
+---
+
+## ⚠️ Scope & Limitations
+
+PhantomCore is a **signal processing library**, not a complete BCI system. Understanding its scope helps set realistic expectations:
+
+### What PhantomCore IS
+
+| Capability | Description |
+|------------|-------------|
+| ✅ Signal Processing | Bandpass filtering, spike detection, feature extraction |
+| ✅ Neural Decoding | Kalman filters, linear decoders, neural network inference |
+| ✅ Low-Latency Math | SIMD-optimized matrix operations, lock-free buffers |
+| ✅ Network Client | WebSocket client for PhantomLink data streams |
+
+### What PhantomCore is NOT
+
+| Not Included | You Need |
+|--------------|----------|
+| ❌ Hardware drivers | [SpikeGLX](https://billkarsh.github.io/SpikeGLX/), [Open Ephys](https://open-ephys.org/), or vendor SDKs (Intan, Ripple, Blackrock) |
+| ❌ Raw data acquisition | Hardware-specific APIs for Neuropixels, Utah arrays, etc. |
+| ❌ Electrical safety | Medical device certification, isolation, grounding |
+| ❌ Clinical validation | FDA/CE approval for human use |
+
+### Typical Integration
+
+```
+┌──────────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────┐
+│ Recording System │────▶│  SpikeGLX /  │────▶│ PhantomLink │────▶│ Phantom- │
+│ (Neuropixels,    │     │  Open Ephys  │     │  (Stream)   │     │   Core   │
+│  Utah Array)     │     │  (Acquire)   │     └─────────────┘     └──────────┘
+└──────────────────┘     └──────────────┘
+        ▲                                                              │
+        │                                                              ▼
+   HARDWARE LAYER                                              ┌──────────────┐
+   (Not PhantomCore)                                           │   Actuator   │
+                                                               │  (Prosthetic,│
+                                                               │   Cursor)    │
+                                                               └──────────────┘
+```
+
+PhantomCore assumes you already have a working data acquisition pipeline. It focuses exclusively on **sub-millisecond processing** of neural data, leaving hardware integration to specialized tools.
 
 ---
 
