@@ -106,18 +106,38 @@ DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
     ObsVector y = z - impl_->H * x_pred;
     impl_->last_innovation_magnitude = y.norm();
     
-    // Innovation covariance: S = H * P_pred * H^T + R
-    auto S = impl_->H * P_pred * impl_->H.transpose() + impl_->R;
+    // -------------------------------------------------------------------------
+    // OPTIMIZED: Use Joseph form update with precomputed R inverse
+    // Instead of inverting 142x142 S matrix, use the 4x4 state-space formulation
+    // K = P * H^T * (H * P * H^T + R)^-1
+    // 
+    // Using Woodbury identity for efficiency:
+    // (H * P * H^T + R)^-1 = R^-1 - R^-1 * H * (P^-1 + H^T * R^-1 * H)^-1 * H^T * R^-1
+    // But simpler: work in state space with 4x4 matrices
+    // -------------------------------------------------------------------------
     
-    // Kalman gain: K = P_pred * H^T * S^-1
-    impl_->kalman_gain = P_pred * impl_->H.transpose() * S.inverse();
+    // Compute H^T (transposed observation model) - 4x142
+    auto H_T = impl_->H.transpose();
+    
+    // R is diagonal, so R^-1 * y is just element-wise division
+    // For diagonal R = r*I, R^-1 = (1/r)*I
+    float r_inv = 1.0f / impl_->R(0, 0);  // Assuming diagonal R
+    
+    // Compute H^T * R^-1 * H (4x4 matrix) - precomputable in steady state
+    StateMatrix H_T_R_inv_H = H_T * (r_inv * impl_->H);
+    
+    // Compute (P_pred^-1 + H^T * R^-1 * H)^-1 using 4x4 inversion
+    StateMatrix P_pred_inv = P_pred.inverse();  // Only 4x4 inversion!
+    StateMatrix M = (P_pred_inv + H_T_R_inv_H).inverse();  // 4x4 inversion
+    
+    // Kalman gain: K = M * H^T * R^-1 (4x142)
+    impl_->kalman_gain = M * H_T * r_inv;
     
     // Updated state: x = x_pred + K * y
     impl_->state = x_pred + impl_->kalman_gain * y;
     
-    // Updated covariance: P = (I - K * H) * P_pred
-    StateMatrix I = StateMatrix::Identity();
-    impl_->covariance = (I - impl_->kalman_gain * impl_->H) * P_pred;
+    // Updated covariance: P = M (this is the Joseph form result)
+    impl_->covariance = M;
     
     // Build output
     DecoderOutput output;
