@@ -57,7 +57,12 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Run Tests
+      - name: Run Tests (Linux)
+        if: runner.os == 'Linux'
+        run: ctest --test-dir build --output-on-failure --parallel
+
+      - name: Run Tests (Windows)
+        if: runner.os == 'Windows'
         run: ctest --test-dir build --build-config Release --output-on-failure --parallel
 
       - name: Upload Build Artifacts (Linux)

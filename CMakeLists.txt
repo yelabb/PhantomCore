@@ -46,6 +46,10 @@ option(PHANTOMCORE_ENABLE_ONNX "Enable ONNX Runtime for neural network decoders"
 # ============================================================================
 include(FetchContent)
 
+# Save the original BUILD_TESTING value
+set(_ORIGINAL_BUILD_TESTING ${BUILD_TESTING})
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)  # Disable tests for dependencies
+
 # IXWebSocket - Modern C++ WebSocket library
 FetchContent_Declare(
     ixwebsocket
@@ -69,6 +73,8 @@ endif()
 # Note: Using simple binary serialization instead of msgpack to avoid Boost dependency
 
 # Eigen - Linear algebra (for Kalman filter)
+set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     eigen
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
@@ -83,6 +89,9 @@ FetchContent_Declare(
     GIT_TAG v1.1.0
 )
 FetchContent_MakeAvailable(expected)
+
+# Restore the original BUILD_TESTING value
+set(BUILD_TESTING ${_ORIGINAL_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 # ============================================================================
 # CUDA Support (Optional)
