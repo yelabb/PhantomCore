@@ -78,6 +78,7 @@ FetchContent_MakeAvailable(eigen)
 # Core Library
 # ============================================================================
 add_library(phantomcore STATIC
+    src/phantomcore.cpp
     src/spike_detector.cpp
     src/kalman_decoder.cpp
     src/stream_client.cpp
