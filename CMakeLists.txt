@@ -46,15 +46,20 @@ option(PHANTOMCORE_ENABLE_ONNX "Enable ONNX Runtime for neural network decoders"
 # ============================================================================
 include(FetchContent)
 
+# Save the original BUILD_TESTING value
+set(_ORIGINAL_BUILD_TESTING ${BUILD_TESTING})
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)  # Disable tests for dependencies
+
 # IXWebSocket - Modern C++ WebSocket library
 FetchContent_Declare(
     ixwebsocket
     GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
     GIT_TAG v11.4.4
 )
-# Disable TLS for simpler build, disable tests
+# Disable TLS for simpler build, disable tests, disable zlib
 set(USE_TLS OFF CACHE BOOL "" FORCE)
 set(USE_WS OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ixwebsocket)
 # Remove warnings-as-errors for ixwebsocket (third-party code)
 if(TARGET ixwebsocket)
@@ -68,12 +73,25 @@ endif()
 # Note: Using simple binary serialization instead of msgpack to avoid Boost dependency
 
 # Eigen - Linear algebra (for Kalman filter)
+set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     eigen
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
     GIT_TAG 3.4.0
 )
 FetchContent_MakeAvailable(eigen)
+
+# tl::expected - Error handling (C++23 expected backport)
+FetchContent_Declare(
+    expected
+    GIT_REPOSITORY https://github.com/TartanLlama/expected.git
+    GIT_TAG v1.1.0
+)
+FetchContent_MakeAvailable(expected)
+
+# Restore the original BUILD_TESTING value
+set(BUILD_TESTING ${_ORIGINAL_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 # ============================================================================
 # CUDA Support (Optional)
@@ -144,6 +162,7 @@ target_include_directories(phantomcore PUBLIC
 target_link_libraries(phantomcore PUBLIC
     ixwebsocket
     Eigen3::Eigen
+    tl::expected
 )
 
 # CUDA support

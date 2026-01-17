@@ -257,9 +257,9 @@ struct NeuralNetDecoder::Impl {
         }
     }
     
-    std::expected<DecoderOutput, NNError> run_inference(std::span<const float> input) {
+    tl::expected<DecoderOutput, NNError> run_inference(std::span<const float> input) {
         if (!session) {
-            return std::unexpected(NNError::ModelNotLoaded);
+            return tl::unexpected(NNError::ModelNotLoaded);
         }
         
         auto total_start = Clock::now();
@@ -326,10 +326,10 @@ struct NeuralNetDecoder::Impl {
         } catch (const Ort::Exception& e) {
             (void)e;
             failed_inferences++;
-            return std::unexpected(NNError::InferenceFailed);
+            return tl::unexpected(NNError::InferenceFailed);
         } catch (...) {
             failed_inferences++;
-            return std::unexpected(NNError::InferenceFailed);
+            return tl::unexpected(NNError::InferenceFailed);
         }
     }
 #endif
@@ -346,9 +346,9 @@ NeuralNetDecoder::~NeuralNetDecoder() = default;
 NeuralNetDecoder::NeuralNetDecoder(NeuralNetDecoder&&) noexcept = default;
 NeuralNetDecoder& NeuralNetDecoder::operator=(NeuralNetDecoder&&) noexcept = default;
 
-std::expected<void, NNError> NeuralNetDecoder::load_model(const std::filesystem::path& model_path) {
+tl::expected<void, NNError> NeuralNetDecoder::load_model(const std::filesystem::path& model_path) {
     if (!std::filesystem::exists(model_path)) {
-        return std::unexpected(NNError::FileNotFound);
+        return tl::unexpected(NNError::FileNotFound);
     }
     
 #ifdef PHANTOMCORE_ENABLE_ONNX
@@ -356,7 +356,7 @@ std::expected<void, NNError> NeuralNetDecoder::load_model(const std::filesystem:
         // Read file into buffer
         std::ifstream file(model_path, std::ios::binary | std::ios::ate);
         if (!file) {
-            return std::unexpected(NNError::FileNotFound);
+            return tl::unexpected(NNError::FileNotFound);
         }
         
         std::streamsize size = file.tellg();
@@ -364,12 +364,12 @@ std::expected<void, NNError> NeuralNetDecoder::load_model(const std::filesystem:
         
         std::vector<char> buffer(static_cast<size_t>(size));
         if (!file.read(buffer.data(), size)) {
-            return std::unexpected(NNError::InvalidModel);
+            return tl::unexpected(NNError::InvalidModel);
         }
         
         auto error = impl_->create_session(buffer.data(), buffer.size());
         if (error != NNError::Success) {
-            return std::unexpected(error);
+            return tl::unexpected(error);
         }
         
         impl_->model_loaded = true;
@@ -380,19 +380,19 @@ std::expected<void, NNError> NeuralNetDecoder::load_model(const std::filesystem:
         return {};
         
     } catch (...) {
-        return std::unexpected(NNError::InvalidModel);
+        return tl::unexpected(NNError::InvalidModel);
     }
 #else
     (void)model_path;
-    return std::unexpected(NNError::BackendNotAvailable);
+    return tl::unexpected(NNError::BackendNotAvailable);
 #endif
 }
 
-std::expected<void, NNError> NeuralNetDecoder::load_model(std::span<const uint8_t> model_data) {
+tl::expected<void, NNError> NeuralNetDecoder::load_model(std::span<const uint8_t> model_data) {
 #ifdef PHANTOMCORE_ENABLE_ONNX
     auto error = impl_->create_session(model_data.data(), model_data.size());
     if (error != NNError::Success) {
-        return std::unexpected(error);
+        return tl::unexpected(error);
     }
     
     impl_->model_loaded = true;
@@ -402,15 +402,15 @@ std::expected<void, NNError> NeuralNetDecoder::load_model(std::span<const uint8_
     return {};
 #else
     (void)model_data;
-    return std::unexpected(NNError::BackendNotAvailable);
+    return tl::unexpected(NNError::BackendNotAvailable);
 #endif
 }
 
-std::expected<void, NNError> NeuralNetDecoder::load_builtin_model(const std::string& model_name) {
+tl::expected<void, NNError> NeuralNetDecoder::load_builtin_model(const std::string& model_name) {
     // Built-in models would be embedded in the library or downloaded
     // For now, return not found - user needs to provide ONNX file
     (void)model_name;
-    return std::unexpected(NNError::FileNotFound);
+    return tl::unexpected(NNError::FileNotFound);
 }
 
 bool NeuralNetDecoder::is_model_loaded() const {
@@ -436,13 +436,13 @@ void NeuralNetDecoder::unload_model() {
     impl_->clear_sequence();
 }
 
-std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(const SpikeData& spike_data) {
+tl::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(const SpikeData& spike_data) {
     return decode(std::span<const float>(spike_data.data(), spike_data.size()));
 }
 
-std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const float> spike_counts) {
+tl::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const float> spike_counts) {
     if (!impl_->model_loaded) {
-        return std::unexpected(NNError::ModelNotLoaded);
+        return tl::unexpected(NNError::ModelNotLoaded);
     }
     
 #ifdef PHANTOMCORE_ENABLE_ONNX
@@ -464,7 +464,7 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
         auto nn_result = impl_->run_inference(sequence_input);
         
         if (!nn_result) {
-            return std::unexpected(nn_result.error());
+            return tl::unexpected(nn_result.error());
         }
         
         // Hybrid mode: blend with Kalman
@@ -500,7 +500,7 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
         auto nn_result = impl_->run_inference(spike_counts);
         
         if (!nn_result) {
-            return std::unexpected(nn_result.error());
+            return tl::unexpected(nn_result.error());
         }
         
         // Hybrid mode
@@ -533,16 +533,16 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
     }
 #else
     (void)spike_counts;
-    return std::unexpected(NNError::BackendNotAvailable);
+    return tl::unexpected(NNError::BackendNotAvailable);
 #endif
 }
 
-std::expected<std::vector<DecoderOutput>, NNError> NeuralNetDecoder::decode_batch(
+tl::expected<std::vector<DecoderOutput>, NNError> NeuralNetDecoder::decode_batch(
     std::span<const float> spike_batch,
     size_t num_samples
 ) {
     if (!impl_->model_loaded) {
-        return std::unexpected(NNError::ModelNotLoaded);
+        return tl::unexpected(NNError::ModelNotLoaded);
     }
     
     std::vector<DecoderOutput> results;
@@ -554,7 +554,7 @@ std::expected<std::vector<DecoderOutput>, NNError> NeuralNetDecoder::decode_batc
         auto sample = spike_batch.subspan(i * channels, channels);
         auto result = decode(sample);
         if (!result) {
-            return std::unexpected(result.error());
+            return tl::unexpected(result.error());
         }
         results.push_back(*result);
     }
@@ -562,9 +562,9 @@ std::expected<std::vector<DecoderOutput>, NNError> NeuralNetDecoder::decode_batc
     return results;
 }
 
-std::expected<DecoderOutput, NNError> NeuralNetDecoder::predict() {
+tl::expected<DecoderOutput, NNError> NeuralNetDecoder::predict() {
     if (!impl_->model_loaded) {
-        return std::unexpected(NNError::ModelNotLoaded);
+        return tl::unexpected(NNError::ModelNotLoaded);
     }
     
     // For recurrent models, run inference on current sequence
@@ -579,7 +579,7 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::predict() {
 #endif
     }
     
-    return std::unexpected(NNError::InvalidModel);
+    return tl::unexpected(NNError::InvalidModel);
 }
 
 void NeuralNetDecoder::reset() {
@@ -723,11 +723,11 @@ NNBackend NeuralNetDecoder::get_recommended_backend() {
 #endif
 }
 
-std::expected<NNModelInfo, NNError> NeuralNetDecoder::validate_model(
+tl::expected<NNModelInfo, NNError> NeuralNetDecoder::validate_model(
     const std::filesystem::path& model_path
 ) {
     if (!std::filesystem::exists(model_path)) {
-        return std::unexpected(NNError::FileNotFound);
+        return tl::unexpected(NNError::FileNotFound);
     }
     
     NNModelInfo info;
@@ -955,7 +955,7 @@ if __name__ == '__main__':
     return script.str();
 }
 
-std::expected<void, NNError> NNModelBuilder::quantize_model(
+tl::expected<void, NNError> NNModelBuilder::quantize_model(
     const std::filesystem::path& input_path,
     const std::filesystem::path& output_path,
     Quantization quantization
@@ -965,7 +965,7 @@ std::expected<void, NNError> NNModelBuilder::quantize_model(
     (void)input_path;
     (void)output_path;
     (void)quantization;
-    return std::unexpected(NNError::UnsupportedArchitecture);
+    return tl::unexpected(NNError::UnsupportedArchitecture);
 }
 
 }  // namespace phantomcore

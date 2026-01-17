@@ -4,9 +4,10 @@
 #include "kalman_decoder.hpp"
 #include <memory>
 #include <span>
+#include <optional>
 #include <string>
 #include <vector>
-#include <expected>
+#include <tl/expected.hpp>
 #include <functional>
 #include <filesystem>
 
@@ -191,14 +192,14 @@ public:
      * @param model_path Path to .onnx file
      * @return Success or error
      */
-    std::expected<void, NNError> load_model(const std::filesystem::path& model_path);
+    tl::expected<void, NNError> load_model(const std::filesystem::path& model_path);
     
     /**
      * @brief Load model from memory buffer
      * @param model_data ONNX model bytes
      * @return Success or error
      */
-    std::expected<void, NNError> load_model(std::span<const uint8_t> model_data);
+    tl::expected<void, NNError> load_model(std::span<const uint8_t> model_data);
     
     /**
      * @brief Load pre-built model by name
@@ -210,7 +211,7 @@ public:
      * - "tcn_light": Lightweight TCN, ~30K params, ~4μs
      * - "hybrid_tcn": TCN + Kalman fusion, ~40K params, ~6μs
      */
-    std::expected<void, NNError> load_builtin_model(const std::string& model_name);
+    tl::expected<void, NNError> load_builtin_model(const std::string& model_name);
     
     /**
      * @brief Check if model is loaded
@@ -234,12 +235,12 @@ public:
     /**
      * @brief Decode spike data to kinematics
      */
-    std::expected<DecoderOutput, NNError> decode(const SpikeData& spike_data);
+    tl::expected<DecoderOutput, NNError> decode(const SpikeData& spike_data);
     
     /**
      * @brief Decode with span input
      */
-    std::expected<DecoderOutput, NNError> decode(std::span<const float> spike_counts);
+    tl::expected<DecoderOutput, NNError> decode(std::span<const float> spike_counts);
     
     /**
      * @brief Batch decode for offline analysis
@@ -247,7 +248,7 @@ public:
      * @param num_samples Number of samples
      * @return Vector of decoded outputs
      */
-    std::expected<std::vector<DecoderOutput>, NNError> decode_batch(
+    tl::expected<std::vector<DecoderOutput>, NNError> decode_batch(
         std::span<const float> spike_batch,
         size_t num_samples
     );
@@ -255,7 +256,7 @@ public:
     /**
      * @brief Predict without new input (for recurrent models)
      */
-    std::expected<DecoderOutput, NNError> predict();
+    tl::expected<DecoderOutput, NNError> predict();
     
     /**
      * @brief Reset internal state (for recurrent models)
@@ -372,7 +373,7 @@ public:
     /**
      * @brief Validate ONNX model file
      */
-    static std::expected<NNModelInfo, NNError> validate_model(
+    static tl::expected<NNModelInfo, NNError> validate_model(
         const std::filesystem::path& model_path
     );
 
@@ -448,7 +449,7 @@ public:
      * @param quantization Target quantization level
      * @return Success or error
      */
-    static std::expected<void, NNError> quantize_model(
+    static tl::expected<void, NNError> quantize_model(
         const std::filesystem::path& input_path,
         const std::filesystem::path& output_path,
         Quantization quantization

@@ -5,7 +5,7 @@
 #include <memory>
 #include <span>
 #include <optional>
-#include <expected>
+#include <tl/expected.hpp>
 
 namespace phantomcore {
 
@@ -178,12 +178,12 @@ public:
      * @param spike_data Input spike counts
      * @return Decoded kinematics or error
      */
-    std::expected<DecoderOutput, GPUError> decode(const SpikeData& spike_data);
+    tl::expected<DecoderOutput, GPUError> decode(const SpikeData& spike_data);
     
     /**
      * @brief Decode with raw span (for zero-copy from ring buffer)
      */
-    std::expected<DecoderOutput, GPUError> decode(std::span<const float> spike_counts);
+    tl::expected<DecoderOutput, GPUError> decode(std::span<const float> spike_counts);
     
     /**
      * @brief Batch decode multiple samples (offline analysis)
@@ -193,7 +193,7 @@ public:
      * @param spike_batch Matrix [num_samples x num_channels]
      * @return Vector of decoded outputs
      */
-    std::expected<std::vector<DecoderOutput>, GPUError> decode_batch(
+    tl::expected<std::vector<DecoderOutput>, GPUError> decode_batch(
         std::span<const float> spike_batch,
         size_t num_samples
     );
@@ -201,20 +201,20 @@ public:
     /**
      * @brief Predict without measurement (async-friendly)
      */
-    std::expected<DecoderOutput, GPUError> predict();
+    tl::expected<DecoderOutput, GPUError> predict();
     
     /**
      * @brief Get result from async decode (non-blocking)
      * @return Result if ready, nullopt if still processing
      */
-    std::optional<std::expected<DecoderOutput, GPUError>> try_get_result();
+    std::optional<tl::expected<DecoderOutput, GPUError>> try_get_result();
     
     /**
      * @brief Wait for async decode to complete
      * @param timeout_us Maximum wait time in microseconds (0 = infinite)
      * @return Result or timeout error
      */
-    std::expected<DecoderOutput, GPUError> wait_for_result(uint64_t timeout_us = 0);
+    tl::expected<DecoderOutput, GPUError> wait_for_result(uint64_t timeout_us = 0);
     
     // ========================================================================
     // Calibration
@@ -339,7 +339,7 @@ public:
      * @param probe_data Vector of spike data, one per probe
      * @return Fused decoder output
      */
-    std::expected<DecoderOutput, GPUError> decode(
+    tl::expected<DecoderOutput, GPUError> decode(
         const std::vector<SpikeData>& probe_data
     );
     

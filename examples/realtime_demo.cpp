@@ -99,7 +99,12 @@ int main(int argc, char* argv[]) {
         total_latency_tracker.record(end - start);
         
         double decode_us = to_microseconds(output.processing_time);
-        total_decode_us += decode_us;
+        {
+            double current = total_decode_us.load();
+            while (!total_decode_us.compare_exchange_weak(current, current + decode_us)) {
+                // Retry if another thread modified it
+            }
+        }
         uint64_t count = ++packet_count;
         
         // Print every 40th packet (1 per second at 40Hz)
