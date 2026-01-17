@@ -126,7 +126,8 @@ public:
         Config() = default;
     };
     
-    explicit GPUDecoder(const Config& config = Config{});
+    explicit GPUDecoder(const Config& config);
+    GPUDecoder();
     ~GPUDecoder();
     
     // Non-copyable, movable

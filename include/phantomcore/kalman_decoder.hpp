@@ -84,7 +84,8 @@ public:
         Config() = default;
     };
     
-    explicit KalmanDecoder(const Config& config = Config{});
+    explicit KalmanDecoder(const Config& config);
+    KalmanDecoder();
     
     /// Convenience constructor with channel config
     explicit KalmanDecoder(const ChannelConfig& channel_config);
@@ -322,7 +323,8 @@ public:
             , weights_y(ch_config.num_channels, 0.0f) {}
     };
     
-    explicit LinearDecoder(const Config& config = Config{});
+    explicit LinearDecoder(const Config& config);
+    LinearDecoder();
     explicit LinearDecoder(const ChannelConfig& channel_config);
     
     /**
@@ -380,7 +382,8 @@ public:
         Config() = default;
     };
     
-    explicit VelocityKalmanDecoder(const Config& config = Config{});
+    explicit VelocityKalmanDecoder(const Config& config);
+    VelocityKalmanDecoder();
     
     DecoderOutput decode(const SpikeCountArray& spike_counts);
     void reset();

@@ -172,7 +172,8 @@ public:
         Config() = default;
     };
     
-    explicit NeuralNetDecoder(const Config& config = Config{});
+    explicit NeuralNetDecoder(const Config& config);
+    NeuralNetDecoder();
     ~NeuralNetDecoder();
     
     // Non-copyable, movable

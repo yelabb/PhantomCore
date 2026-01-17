@@ -41,7 +41,8 @@ public:
         std::vector<float> cv_scores;
     };
     
-    explicit RidgeRegression(const Config& config = Config{});
+    explicit RidgeRegression(const Config& config);
+    RidgeRegression();
     ~RidgeRegression();
     
     RidgeRegression(RidgeRegression&&) noexcept;
@@ -122,7 +123,8 @@ public:
         Config() = default;
     };
     
-    explicit ElasticNet(const Config& config = Config{});
+    explicit ElasticNet(const Config& config);
+    ElasticNet();
     ~ElasticNet();
     
     bool fit(const Eigen::MatrixXf& X, const Eigen::VectorXf& y);
@@ -167,7 +169,8 @@ public:
         Config() = default;
     };
     
-    explicit BayesianRidge(const Config& config = Config{});
+    explicit BayesianRidge(const Config& config);
+    BayesianRidge();
     ~BayesianRidge();
     
     BayesianRidge(BayesianRidge&&) noexcept;

@@ -150,7 +150,8 @@ public:
         Config() = default;
     };
     
-    explicit SpikeSorter(const Config& config = Config{});
+    explicit SpikeSorter(const Config& config);
+    SpikeSorter();
     ~SpikeSorter();
     
     /**

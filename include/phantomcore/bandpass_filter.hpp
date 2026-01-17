@@ -62,8 +62,13 @@ public:
         Config() = default;
     };
     
-    explicit ButterworthBandpass(const Config& config = Config{}) 
+    explicit ButterworthBandpass(const Config& config)
         : config_(config) {
+        design_filter();
+    }
+    
+    ButterworthBandpass() 
+        : config_(Config{}) {
         design_filter();
     }
     

@@ -365,7 +365,8 @@ public:
         Config() = default;
     };
     
-    explicit FiringRateMonitor(const Config& config = Config{});
+    explicit FiringRateMonitor(const Config& config);
+    FiringRateMonitor();
     ~FiringRateMonitor();
     
     /**

@@ -39,7 +39,8 @@ public:
         Config() = default;
     };
     
-    explicit PCAProjector(const Config& config = Config{});
+    explicit PCAProjector(const Config& config);
+    PCAProjector();
     ~PCAProjector();
     
     // Move-only
@@ -154,7 +155,8 @@ public:
         Config() = default;
     };
     
-    explicit FactorAnalysis(const Config& config = Config{});
+    explicit FactorAnalysis(const Config& config);
+    FactorAnalysis();
     ~FactorAnalysis();
     
     FactorAnalysis(FactorAnalysis&&) noexcept;
