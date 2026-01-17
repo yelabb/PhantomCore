@@ -15,7 +15,7 @@
 [![C++20](https://img.shields.io/badge/C++-20-blue.svg)](https://isocpp.org/)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-green.svg)](https://cmake.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PhantomLink](https://img.shields.io/badge/Works_with-PhantomLink-009688.svg)](../PhantomLink)
+[![PhantomLink](https://img.shields.io/badge/Works_with-PhantomLink-009688.svg)](https://github.com/yelabb/PhantomLink)
 
 *Sub-millisecond neural decoding for real-time brain-computer interfaces*
 
