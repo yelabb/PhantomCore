@@ -2,6 +2,7 @@
 
 #include "types.hpp"
 #include "simd_utils.hpp"
+#include "bandpass_filter.hpp"
 #include <memory>
 #include <span>
 #include <vector>
@@ -11,11 +12,16 @@ namespace phantomcore {
 /**
  * @brief High-performance spike detection engine with SIMD optimization
  * 
- * Implements threshold-based spike detection with:
- * - Adaptive thresholding
- * - Refractory period enforcement
- * - SIMD-accelerated processing
- * - Waveform extraction for sorting
+ * Implements a proper neural signal processing pipeline:
+ * 
+ *   Raw Signal → [Bandpass Filter] → [Threshold Detection] → Spike Events
+ *                 300-3000 Hz          Adaptive threshold
+ *                 Butterworth           with refractory
+ * 
+ * The bandpass filter is CRITICAL for BCI applications:
+ * - Removes LFP (< 300 Hz): Slow oscillations, movement artifacts
+ * - Removes high-freq noise (> 3000 Hz): EMG, electrical interference
+ * - Isolates action potential frequency band
  */
 class SpikeDetector {
 public:

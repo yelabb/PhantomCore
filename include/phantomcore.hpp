@@ -5,6 +5,7 @@
 
 #include "phantomcore/types.hpp"
 #include "phantomcore/simd_utils.hpp"
+#include "phantomcore/bandpass_filter.hpp"
 #include "phantomcore/spike_detector.hpp"
 #include "phantomcore/kalman_decoder.hpp"
 #include "phantomcore/stream_client.hpp"

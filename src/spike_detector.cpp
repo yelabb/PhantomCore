@@ -1,4 +1,5 @@
 #include "phantomcore/spike_detector.hpp"
+#include "phantomcore/bandpass_filter.hpp"
 #include "phantomcore/latency_tracker.hpp"
 #include <algorithm>
 #include <cmath>
@@ -18,6 +19,10 @@ struct SpikeDetector::Impl {
     std::array<size_t, NUM_CHANNELS> refractory_counter{};
     std::array<bool, NUM_CHANNELS> channel_enabled{};
     
+    // DSP: Bandpass filter bank (one filter per channel)
+    std::unique_ptr<BandpassFilterBank<NUM_CHANNELS>> filter_bank;
+    bool filtering_enabled = true;
+    
     // Statistics
     Stats stats{};
     LatencyTracker latency_tracker{1000};
@@ -33,7 +38,7 @@ struct SpikeDetector::Impl {
     }
     
     void update_adaptive_threshold(size_t channel, float value, double rate) {
-        // Welford's online algorithm
+        // Welford's online algorithm for FILTERED signal statistics
         sample_count++;
         float delta = value - running_mean[channel];
         running_mean[channel] += delta / static_cast<float>(sample_count);
@@ -52,6 +57,18 @@ SpikeDetector::SpikeDetector(const SpikeDetectorConfig& config)
     : impl_(std::make_unique<Impl>()), config_(config) {
     // Initialize thresholds based on config
     impl_->thresholds.fill(config.threshold_std);
+    
+    // Initialize bandpass filter bank
+    impl_->filtering_enabled = config.use_bandpass_filter;
+    if (impl_->filtering_enabled) {
+        ButterworthBandpass::Config filter_cfg;
+        filter_cfg.sample_rate = config.sample_rate;
+        filter_cfg.low_cutoff = config.bandpass_low;
+        filter_cfg.high_cutoff = config.bandpass_high;
+        filter_cfg.order = config.filter_order;
+        
+        impl_->filter_bank = std::make_unique<BandpassFilterBank<NUM_CHANNELS>>(filter_cfg);
+    }
 }
 
 SpikeDetector::~SpikeDetector() = default;
@@ -78,7 +95,21 @@ std::vector<SpikeEvent> SpikeDetector::process_sample(
         
         float value = sample[ch];
         
-        // Adaptive threshold update
+        // =====================================================================
+        // CRITICAL DSP STEP: Bandpass Filter (300-3000 Hz)
+        // =====================================================================
+        // Raw neural signals contain:
+        // - LFP oscillations (< 300 Hz) - slow waves, movement artifacts
+        // - Action potentials (300-3000 Hz) - the actual spikes we want
+        // - High-frequency noise (> 3000 Hz) - EMG, electrical interference
+        //
+        // Without filtering, threshold detection triggers on artifacts!
+        // =====================================================================
+        if (impl_->filtering_enabled && impl_->filter_bank) {
+            value = impl_->filter_bank->process(ch, value);
+        }
+        
+        // Adaptive threshold update (on FILTERED signal)
         if (config_.use_adaptive_threshold) {
             impl_->update_adaptive_threshold(ch, value, config_.adaptation_rate);
         }
@@ -159,8 +190,21 @@ std::vector<SpikeEvent> SpikeDetector::process_spike_counts(
 }
 
 void SpikeDetector::reset() {
+    // Reset statistics and thresholds
     impl_ = std::make_unique<Impl>();
     impl_->thresholds.fill(config_.threshold_std);
+    
+    // Reinitialize bandpass filter bank with fresh state
+    impl_->filtering_enabled = config_.use_bandpass_filter;
+    if (impl_->filtering_enabled) {
+        ButterworthBandpass::Config filter_cfg;
+        filter_cfg.sample_rate = config_.sample_rate;
+        filter_cfg.low_cutoff = config_.bandpass_low;
+        filter_cfg.high_cutoff = config_.bandpass_high;
+        filter_cfg.order = config_.filter_order;
+        
+        impl_->filter_bank = std::make_unique<BandpassFilterBank<NUM_CHANNELS>>(filter_cfg);
+    }
 }
 
 std::span<const float> SpikeDetector::get_thresholds() const {

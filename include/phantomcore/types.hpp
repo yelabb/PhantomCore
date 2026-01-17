@@ -159,6 +159,13 @@ struct SpikeDetectorConfig {
     size_t post_samples = 32;            // Samples after threshold crossing
     bool use_adaptive_threshold = true;   // Adapt threshold over time
     double adaptation_rate = 0.001;       // Threshold adaptation rate
+    
+    // DSP Bandpass Filter Configuration
+    bool use_bandpass_filter = true;      // CRITICAL: Filter before detection
+    float sample_rate = 30000.0f;         // Hz (typical neural recording rate)
+    float bandpass_low = 300.0f;          // Hz (removes LFP, motion artifacts)
+    float bandpass_high = 3000.0f;        // Hz (removes high-frequency noise)
+    uint8_t filter_order = 4;             // Butterworth order (2 or 4)
 };
 
 /// Waveform snippet for spike sorting
