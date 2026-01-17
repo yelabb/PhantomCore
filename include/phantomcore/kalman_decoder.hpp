@@ -7,27 +7,44 @@
 
 namespace phantomcore {
 
+// Forward declarations
+class PCAProjector;
+class RidgeRegression;
+
 /**
- * @brief Kalman Filter-based neural decoder
+ * @brief Kalman Filter-based neural decoder with dimensionality reduction
  * 
- * Implements a standard Kalman filter for decoding cursor kinematics
- * from neural spike counts. Optimized for real-time performance with
- * pre-computed matrix operations.
+ * Production-grade implementation with:
+ * 
+ * 1. **PCA Dimensionality Reduction**: 142 channels → 15 latent dimensions
+ *    Reduces noise, computational cost, and improves generalization
+ * 
+ * 2. **Regularized Calibration**: Ridge regression to prevent overfitting
+ *    on short calibration sessions
+ * 
+ * 3. **Efficient Kalman Update**: Woodbury identity for O(k³) instead of O(n³)
+ *    where k = latent dim, n = channels
+ * 
+ * Pipeline:
+ *   Spikes (142) → [PCA] → Latent (15) → [Kalman Filter] → Kinematics (4)
  * 
  * State vector: [x, y, vx, vy]^T
- * Observation: 142-dimensional spike counts
  */
 class KalmanDecoder {
 public:
     /// State dimension (position + velocity in 2D)
     static constexpr size_t STATE_DIM = 4;
     
-    /// Observation dimension (neural channels)
+    /// Raw observation dimension (neural channels)
     static constexpr size_t OBS_DIM = NUM_CHANNELS;
+    
+    /// Default latent dimension after PCA
+    static constexpr size_t DEFAULT_LATENT_DIM = 15;
     
     using StateVector = Eigen::Vector<float, STATE_DIM>;
     using StateMatrix = Eigen::Matrix<float, STATE_DIM, STATE_DIM>;
     using ObsVector = Eigen::Vector<float, OBS_DIM>;
+    using LatentVector = Eigen::VectorXf;  // Dynamic size for latent space
     using ObsMatrix = Eigen::Matrix<float, OBS_DIM, STATE_DIM>;
     using KalmanGain = Eigen::Matrix<float, STATE_DIM, OBS_DIM>;
     
@@ -54,6 +71,16 @@ public:
         
         /// Time step (seconds)
         float dt = 1.0f / 40.0f;  // 40 Hz
+        
+        // === Dimensionality Reduction ===
+        bool use_pca = true;                  // Enable PCA projection
+        size_t latent_dim = DEFAULT_LATENT_DIM;
+        float pca_variance_threshold = 0.95f; // Or use variance explained
+        bool use_variance_threshold = false;
+        
+        // === Regularization ===
+        float ridge_lambda = 1.0f;            // Ridge regularization strength
+        bool auto_tune_lambda = true;         // Cross-validate to find optimal λ
     };
     
     explicit KalmanDecoder(const Config& config = {});
@@ -100,10 +127,36 @@ public:
     
     /**
      * @brief Update observation model from calibration data
+     * 
+     * Performs:
+     * 1. Fit PCA on neural data (if enabled)
+     * 2. Project to latent space
+     * 3. Fit Ridge regression with optional cross-validation
+     * 4. Initialize Kalman observation model
+     * 
      * @param neural_data Matrix of spike counts [num_samples x num_channels]
      * @param kinematics Matrix of ground truth [num_samples x 4]
+     * @return Calibration results including R² score and optimal lambda
      */
-    void calibrate(
+    struct CalibrationResult {
+        bool success = false;
+        float r2_score = 0.0f;          // Training R² 
+        float cv_score = 0.0f;          // Cross-validation R² (if auto_tune)
+        float optimal_lambda = 0.0f;    // Chosen regularization
+        size_t latent_dim = 0;          // Actual latent dimensions used
+        float variance_explained = 0.0f; // PCA cumulative variance
+        size_t n_samples = 0;
+    };
+    
+    CalibrationResult calibrate(
+        const Eigen::MatrixXf& neural_data,
+        const Eigen::MatrixXf& kinematics
+    );
+    
+    /**
+     * @brief Legacy calibration (no return value)
+     */
+    void calibrate_legacy(
         const Eigen::MatrixXf& neural_data,
         const Eigen::MatrixXf& kinematics
     );

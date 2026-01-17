@@ -1,4 +1,6 @@
 #include "phantomcore/kalman_decoder.hpp"
+#include "phantomcore/dimensionality_reduction.hpp"
+#include "phantomcore/regularization.hpp"
 #include "phantomcore/simd_utils.hpp"
 #include "phantomcore/latency_tracker.hpp"
 #include <algorithm>
@@ -17,8 +19,15 @@ struct KalmanDecoder::Impl {
     // Pre-computed matrices for efficiency
     StateMatrix A;           // State transition
     StateMatrix Q;           // Process noise
-    ObsMatrix H;             // Observation model
+    ObsMatrix H;             // Observation model (raw space)
     Eigen::Matrix<float, OBS_DIM, OBS_DIM> R;  // Measurement noise
+    
+    // === Latent Space Decoding ===
+    std::unique_ptr<PCAProjector> pca;
+    Eigen::MatrixXf H_latent;  // Observation model in latent space [latent_dim x 4]
+    Eigen::MatrixXf R_latent;  // Measurement noise in latent space
+    bool use_latent = false;
+    size_t latent_dim = 0;
     
     // For observation model training
     Eigen::Matrix<float, OBS_DIM, OBS_DIM> H_transpose_R_inv;
@@ -33,6 +42,11 @@ struct KalmanDecoder::Impl {
     AlignedSpikeData spike_mean{};
     AlignedSpikeData spike_std{};
     size_t calibration_samples = 0;
+    
+    // Calibration results
+    float last_r2_score = 0.0f;
+    float last_cv_score = 0.0f;
+    float last_lambda = 0.0f;
     
     Impl() {
         spike_mean.counts.fill(0.0f);
@@ -82,7 +96,7 @@ DecoderOutput KalmanDecoder::decode(const SpikeCountArray& spike_counts) {
 DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
     auto start = Clock::now();
     
-    // Normalize spikes
+    // Normalize spikes (z-score)
     AlignedSpikeData normalized;
     simd::ChannelProcessor::compute_zscores(
         spike_counts,
@@ -99,45 +113,59 @@ DecoderOutput KalmanDecoder::decode(const AlignedSpikeData& spike_counts) {
     StateMatrix P_pred = impl_->A * impl_->covariance * impl_->A.transpose() + impl_->Q;
     
     // === UPDATE ===
-    // Convert normalized spikes to Eigen vector
-    Eigen::Map<const ObsVector> z(normalized.data());
+    // Branch based on whether we use latent space or raw observations
     
-    // Innovation: y = z - H * x_pred
-    ObsVector y = z - impl_->H * x_pred;
-    impl_->last_innovation_magnitude = y.norm();
-    
-    // -------------------------------------------------------------------------
-    // OPTIMIZED: Use Joseph form update with precomputed R inverse
-    // Instead of inverting 142x142 S matrix, use the 4x4 state-space formulation
-    // K = P * H^T * (H * P * H^T + R)^-1
-    // 
-    // Using Woodbury identity for efficiency:
-    // (H * P * H^T + R)^-1 = R^-1 - R^-1 * H * (P^-1 + H^T * R^-1 * H)^-1 * H^T * R^-1
-    // But simpler: work in state space with 4x4 matrices
-    // -------------------------------------------------------------------------
-    
-    // Compute H^T (transposed observation model) - 4x142
-    auto H_T = impl_->H.transpose();
-    
-    // R is diagonal, so R^-1 * y is just element-wise division
-    // For diagonal R = r*I, R^-1 = (1/r)*I
-    float r_inv = 1.0f / impl_->R(0, 0);  // Assuming diagonal R
-    
-    // Compute H^T * R^-1 * H (4x4 matrix) - precomputable in steady state
-    StateMatrix H_T_R_inv_H = H_T * (r_inv * impl_->H);
-    
-    // Compute (P_pred^-1 + H^T * R^-1 * H)^-1 using 4x4 inversion
-    StateMatrix P_pred_inv = P_pred.inverse();  // Only 4x4 inversion!
-    StateMatrix M = (P_pred_inv + H_T_R_inv_H).inverse();  // 4x4 inversion
-    
-    // Kalman gain: K = M * H^T * R^-1 (4x142)
-    impl_->kalman_gain = M * H_T * r_inv;
-    
-    // Updated state: x = x_pred + K * y
-    impl_->state = x_pred + impl_->kalman_gain * y;
-    
-    // Updated covariance: P = M (this is the Joseph form result)
-    impl_->covariance = M;
+    if (impl_->use_latent && impl_->pca && impl_->pca->is_fitted()) {
+        // =====================================================================
+        // LATENT SPACE KALMAN UPDATE (PCA-reduced, much faster)
+        // =====================================================================
+        // Project to latent space: 142 dims → k dims (typically 15)
+        Eigen::Map<const Eigen::VectorXf> z_raw(normalized.data(), NUM_CHANNELS);
+        Eigen::VectorXf z_latent = impl_->pca->transform(z_raw);
+        
+        const Eigen::Index k = static_cast<Eigen::Index>(impl_->latent_dim);
+        
+        // Innovation in latent space: y = z_latent - H_latent * x_pred
+        // Note: H_latent is [k x 4], maps state to latent observations
+        Eigen::VectorXf y_latent = z_latent - impl_->H_latent * x_pred;
+        impl_->last_innovation_magnitude = y_latent.norm();
+        
+        // Kalman update with k-dimensional observations (k << 142)
+        // S = H_latent * P_pred * H_latent^T + R_latent  [k x k]
+        Eigen::MatrixXf S = impl_->H_latent * P_pred * impl_->H_latent.transpose() + impl_->R_latent;
+        
+        // K = P_pred * H_latent^T * S^-1  [4 x k]
+        Eigen::MatrixXf K = P_pred * impl_->H_latent.transpose() * S.inverse();
+        
+        // Updated state: x = x_pred + K * y_latent
+        impl_->state = x_pred + K * y_latent;
+        
+        // Updated covariance: P = (I - K * H_latent) * P_pred
+        StateMatrix I = StateMatrix::Identity();
+        impl_->covariance = (I - K * impl_->H_latent) * P_pred;
+        
+    } else {
+        // =====================================================================
+        // RAW OBSERVATION KALMAN UPDATE (142 dimensions - Woodbury optimized)
+        // =====================================================================
+        Eigen::Map<const ObsVector> z(normalized.data());
+        
+        // Innovation: y = z - H * x_pred
+        ObsVector y = z - impl_->H * x_pred;
+        impl_->last_innovation_magnitude = y.norm();
+        
+        // Woodbury identity for efficient update
+        auto H_T = impl_->H.transpose();
+        float r_inv = 1.0f / impl_->R(0, 0);
+        
+        StateMatrix H_T_R_inv_H = H_T * (r_inv * impl_->H);
+        StateMatrix P_pred_inv = P_pred.inverse();
+        StateMatrix M = (P_pred_inv + H_T_R_inv_H).inverse();
+        
+        impl_->kalman_gain = M * H_T * r_inv;
+        impl_->state = x_pred + impl_->kalman_gain * y;
+        impl_->covariance = M;
+    }
     
     // Build output
     DecoderOutput output;
@@ -192,43 +220,152 @@ KalmanDecoder::StateMatrix KalmanDecoder::get_covariance() const {
     return impl_->covariance;
 }
 
-void KalmanDecoder::calibrate(
+void KalmanDecoder::calibrate_legacy(
     const Eigen::MatrixXf& neural_data,
     const Eigen::MatrixXf& kinematics
 ) {
-    // Compute normalization parameters
+    calibrate(neural_data, kinematics);
+}
+
+KalmanDecoder::CalibrationResult KalmanDecoder::calibrate(
+    const Eigen::MatrixXf& neural_data,
+    const Eigen::MatrixXf& kinematics
+) {
+    CalibrationResult result;
+    result.n_samples = static_cast<size_t>(neural_data.rows());
+    
+    if (neural_data.rows() < 10 || neural_data.rows() != kinematics.rows()) {
+        return result;
+    }
+    
+    // =========================================================================
+    // Step 1: Compute normalization parameters (z-score)
+    // =========================================================================
     for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
-        impl_->spike_mean[ch] = neural_data.col(ch).mean();
-        float variance = (neural_data.col(ch).array() - impl_->spike_mean[ch]).square().mean();
+        impl_->spike_mean[ch] = neural_data.col(static_cast<Eigen::Index>(ch)).mean();
+        float variance = (neural_data.col(static_cast<Eigen::Index>(ch)).array() - 
+                         impl_->spike_mean[ch]).square().mean();
         impl_->spike_std[ch] = std::sqrt(variance);
         if (impl_->spike_std[ch] < 1e-6f) {
-            impl_->spike_std[ch] = 1.0f;  // Avoid division by zero
+            impl_->spike_std[ch] = 1.0f;
         }
     }
     
     // Normalize neural data
     Eigen::MatrixXf normalized = neural_data;
     for (size_t ch = 0; ch < NUM_CHANNELS; ++ch) {
-        normalized.col(ch) = (neural_data.col(ch).array() - impl_->spike_mean[ch]) / impl_->spike_std[ch];
+        normalized.col(static_cast<Eigen::Index>(ch)) = 
+            (neural_data.col(static_cast<Eigen::Index>(ch)).array() - impl_->spike_mean[ch]) / 
+            impl_->spike_std[ch];
     }
     
-    // Solve for observation model using least squares: H * X = Z
-    // We want H such that H * state ≈ observations
-    // Using pseudoinverse: H = Z * X^T * (X * X^T)^-1
+    // =========================================================================
+    // Step 2: PCA Dimensionality Reduction (142 → latent_dim)
+    // =========================================================================
+    Eigen::MatrixXf features;
     
-    // For simplicity, train a linear mapping from kinematics to neural
-    // (inverse direction, then invert)
-    Eigen::MatrixXf X = kinematics;  // [N x 4]
-    Eigen::MatrixXf Z = normalized;  // [N x 142]
+    if (config_.use_pca) {
+        PCAProjector::Config pca_cfg;
+        pca_cfg.n_components = config_.latent_dim;
+        pca_cfg.use_variance_threshold = config_.use_variance_threshold;
+        pca_cfg.variance_threshold = config_.pca_variance_threshold;
+        pca_cfg.center = true;  // Already normalized, but center in PCA too
+        
+        impl_->pca = std::make_unique<PCAProjector>(pca_cfg);
+        features = impl_->pca->fit_transform(normalized);
+        
+        if (features.cols() == 0) {
+            return result;  // PCA failed
+        }
+        
+        impl_->use_latent = true;
+        impl_->latent_dim = impl_->pca->n_components();
+        result.latent_dim = impl_->latent_dim;
+        result.variance_explained = impl_->pca->cumulative_variance_explained();
+    } else {
+        features = normalized;
+        impl_->use_latent = false;
+        impl_->latent_dim = NUM_CHANNELS;
+        result.latent_dim = NUM_CHANNELS;
+        result.variance_explained = 1.0f;
+    }
     
-    // H = (X^T * X)^-1 * X^T * Z -> gives [4 x 142]
-    // We need H: [142 x 4], so transpose
-    auto XtX = X.transpose() * X;
-    auto XtZ = X.transpose() * Z;
-    Eigen::MatrixXf H_temp = XtX.ldlt().solve(XtZ);  // [4 x 142]
-    impl_->H = H_temp.transpose();  // [142 x 4]
+    // =========================================================================
+    // Step 3: Ridge Regression with Optional Cross-Validation
+    // =========================================================================
+    RidgeRegression::Config ridge_cfg;
+    ridge_cfg.lambda = config_.ridge_lambda;
+    ridge_cfg.fit_intercept = true;
+    ridge_cfg.normalize = false;  // Already normalized
     
-    impl_->calibration_samples = neural_data.rows();
+    RidgeRegression ridge(ridge_cfg);
+    
+    if (config_.auto_tune_lambda) {
+        // Cross-validate to find optimal lambda
+        std::vector<float> lambdas = {0.001f, 0.01f, 0.1f, 1.0f, 10.0f, 100.0f, 1000.0f};
+        auto cv_result = ridge.cross_validate(features, kinematics, lambdas, 5);
+        
+        result.optimal_lambda = cv_result.best_lambda;
+        result.cv_score = cv_result.best_score;
+        
+        // Refit with optimal lambda
+        ridge.set_lambda(cv_result.best_lambda);
+    } else {
+        result.optimal_lambda = config_.ridge_lambda;
+    }
+    
+    if (!ridge.fit(features, kinematics)) {
+        return result;
+    }
+    
+    result.r2_score = ridge.score(features, kinematics);
+    impl_->last_r2_score = result.r2_score;
+    impl_->last_cv_score = result.cv_score;
+    impl_->last_lambda = result.optimal_lambda;
+    
+    // =========================================================================
+    // Step 4: Build Observation Model for Kalman Filter
+    // =========================================================================
+    // The Ridge model learns: kinematics = features * W + b
+    // We need the inverse: H such that H * state ≈ observations
+    // 
+    // For Kalman, we model: z = H * x + noise
+    // where z = latent features, x = [x, y, vx, vy]
+    //
+    // From calibration: x ≈ features * W (Ridge weights)
+    // So: features ≈ x * W^-1 (pseudoinverse)
+    // Thus: H_latent = pinv(W)^T
+    
+    Eigen::MatrixXf W = ridge.coefficients();  // [latent_dim x 4]
+    
+    if (impl_->use_latent) {
+        // Store latent observation model
+        // H_latent maps state (4) to latent (k): H_latent is [k x 4]
+        // We want: z_latent = H_latent * state
+        // From regression: state = features * W => features = state * pinv(W)
+        // So H_latent^T = pinv(W) => H_latent = pinv(W)^T
+        
+        // But for Kalman update, we need H such that innovation = z - H*x
+        // Using pseudoinverse of W
+        impl_->H_latent = W;  // [latent_dim x 4]
+        
+        // Initialize latent R matrix
+        impl_->R_latent = Eigen::MatrixXf::Identity(
+            static_cast<Eigen::Index>(impl_->latent_dim),
+            static_cast<Eigen::Index>(impl_->latent_dim)
+        ) * 0.1f;
+    } else {
+        // Full observation space - copy to fixed-size H
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(NUM_CHANNELS) && i < W.rows(); ++i) {
+            for (Eigen::Index j = 0; j < 4 && j < W.cols(); ++j) {
+                impl_->H(i, j) = W(i, j);
+            }
+        }
+    }
+    
+    impl_->calibration_samples = result.n_samples;
+    result.success = true;
+    return result;
 }
 
 void KalmanDecoder::load_weights(std::span<const float> observation_weights) {

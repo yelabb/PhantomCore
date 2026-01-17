@@ -131,7 +131,7 @@ cmake --build build --config Release
 
 ## 📊 Performance
 
-**Actual benchmarks** on Intel Core i9, Windows 11, MSVC 2022, AVX2 enabled:
+**Actual benchmarks** on a quite old 1st generation of Intel Core i7, Windows 10, MSVC 2022, AVX2 enabled:
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗

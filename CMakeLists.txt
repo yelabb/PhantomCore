@@ -85,6 +85,8 @@ add_library(phantomcore STATIC
     src/simd_utils.cpp
     src/ring_buffer.cpp
     src/latency_tracker.cpp
+    src/dimensionality_reduction.cpp
+    src/regularization.cpp
 )
 
 target_include_directories(phantomcore PUBLIC
