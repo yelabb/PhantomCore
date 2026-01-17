@@ -38,7 +38,8 @@ option(PHANTOMCORE_BUILD_EXAMPLES "Build example applications" ON)
 option(PHANTOMCORE_BUILD_TESTS "Build unit tests" ON)
 option(PHANTOMCORE_BUILD_BENCHMARKS "Build performance benchmarks" ON)
 option(PHANTOMCORE_ENABLE_SIMD "Enable SIMD optimizations" ON)
-option(PHANTOMCORE_ENABLE_CUDA "Enable CUDA acceleration (experimental)" OFF)
+option(PHANTOMCORE_ENABLE_CUDA "Enable CUDA acceleration" OFF)
+option(PHANTOMCORE_ENABLE_ONNX "Enable ONNX Runtime for neural network decoders" OFF)
 
 # ============================================================================
 # Dependencies
@@ -75,6 +76,48 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(eigen)
 
 # ============================================================================
+# CUDA Support (Optional)
+# ============================================================================
+if(PHANTOMCORE_ENABLE_CUDA)
+    enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    message(STATUS "CUDA found: ${CUDAToolkit_VERSION}")
+endif()
+
+# ============================================================================
+# ONNX Runtime Support (Optional)
+# ============================================================================
+if(PHANTOMCORE_ENABLE_ONNX)
+    find_package(onnxruntime CONFIG)
+    if(onnxruntime_FOUND)
+        message(STATUS "ONNX Runtime found")
+    else()
+        # Try to find via environment variable or default path
+        if(DEFINED ENV{ONNXRUNTIME_ROOT})
+            set(ONNXRUNTIME_ROOT $ENV{ONNXRUNTIME_ROOT})
+        elseif(WIN32)
+            set(ONNXRUNTIME_ROOT "C:/onnxruntime")
+        else()
+            set(ONNXRUNTIME_ROOT "/usr/local")
+        endif()
+        
+        find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+            PATHS ${ONNXRUNTIME_ROOT}/include
+        )
+        find_library(ONNXRUNTIME_LIB onnxruntime
+            PATHS ${ONNXRUNTIME_ROOT}/lib
+        )
+        
+        if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIB)
+            message(STATUS "ONNX Runtime found at ${ONNXRUNTIME_ROOT}")
+        else()
+            message(WARNING "ONNX Runtime not found. Neural network decoder will be disabled.")
+            set(PHANTOMCORE_ENABLE_ONNX OFF)
+        endif()
+    endif()
+endif()
+
+# ============================================================================
 # Core Library
 # ============================================================================
 add_library(phantomcore STATIC
@@ -88,6 +131,9 @@ add_library(phantomcore STATIC
     src/dimensionality_reduction.cpp
     src/regularization.cpp
     src/model_checkpoint.cpp
+    src/gpu_decoder.cpp
+    src/adaptive_decoder.cpp
+    src/neural_net_decoder.cpp
 )
 
 target_include_directories(phantomcore PUBLIC
@@ -99,6 +145,23 @@ target_link_libraries(phantomcore PUBLIC
     ixwebsocket
     Eigen3::Eigen
 )
+
+# CUDA support
+if(PHANTOMCORE_ENABLE_CUDA)
+    target_compile_definitions(phantomcore PUBLIC PHANTOMCORE_ENABLE_CUDA)
+    target_link_libraries(phantomcore PUBLIC CUDA::cudart CUDA::cublas)
+endif()
+
+# ONNX Runtime support
+if(PHANTOMCORE_ENABLE_ONNX)
+    target_compile_definitions(phantomcore PUBLIC PHANTOMCORE_ENABLE_ONNX)
+    if(onnxruntime_FOUND)
+        target_link_libraries(phantomcore PUBLIC onnxruntime::onnxruntime)
+    else()
+        target_include_directories(phantomcore PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+        target_link_libraries(phantomcore PRIVATE ${ONNXRUNTIME_LIB})
+    endif()
+endif()
 
 if(PHANTOMCORE_ENABLE_SIMD)
     target_compile_definitions(phantomcore PUBLIC PHANTOMCORE_SIMD_ENABLED)
@@ -188,6 +251,7 @@ message(STATUS "PhantomCore ${PROJECT_VERSION}")
 message(STATUS "  Build type:     ${CMAKE_BUILD_TYPE}")
 message(STATUS "  SIMD:           ${PHANTOMCORE_ENABLE_SIMD}")
 message(STATUS "  CUDA:           ${PHANTOMCORE_ENABLE_CUDA}")
+message(STATUS "  ONNX Runtime:   ${PHANTOMCORE_ENABLE_ONNX}")
 message(STATUS "  Examples:       ${PHANTOMCORE_BUILD_EXAMPLES}")
 message(STATUS "  Tests:          ${PHANTOMCORE_BUILD_TESTS}")
 message(STATUS "  Benchmarks:     ${PHANTOMCORE_BUILD_BENCHMARKS}")

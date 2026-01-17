@@ -16,6 +16,15 @@
 #include "phantomcore/ring_buffer.hpp"
 #include "phantomcore/latency_tracker.hpp"
 
+// === Enhancement 1: GPU/CUDA Acceleration ===
+#include "phantomcore/gpu_decoder.hpp"
+
+// === Enhancement 2: Adaptive Online Calibration ===
+#include "phantomcore/adaptive_decoder.hpp"
+
+// === Enhancement 3: Neural Network Decoder ===
+#include "phantomcore/neural_net_decoder.hpp"
+
 namespace phantomcore {
 
 /// Library version

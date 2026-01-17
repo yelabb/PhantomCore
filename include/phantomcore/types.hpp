@@ -244,6 +244,29 @@ struct Velocity2D {
     float vy = 0.0f;
 };
 
+/// 4D state vector (position + velocity)
+struct Vec4 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    
+    Vec4 operator+(const Vec4& other) const { 
+        return {x + other.x, y + other.y, vx + other.vx, vy + other.vy}; 
+    }
+    Vec4 operator-(const Vec4& other) const { 
+        return {x - other.x, y - other.y, vx - other.vx, vy - other.vy}; 
+    }
+    Vec4 operator*(float s) const { 
+        return {x * s, y * s, vx * s, vy * s}; 
+    }
+    
+    float norm() const { return std::sqrt(x*x + y*y + vx*vx + vy*vy); }
+    
+    Vec2 position() const { return {x, y}; }
+    Vec2 velocity() const { return {vx, vy}; }
+};
+
 /// Complete kinematics state
 struct Kinematics {
     Vec2 position;
