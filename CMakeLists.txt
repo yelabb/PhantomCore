@@ -52,9 +52,10 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
     GIT_TAG v11.4.4
 )
-# Disable TLS for simpler build, disable tests
+# Disable TLS for simpler build, disable tests, disable zlib
 set(USE_TLS OFF CACHE BOOL "" FORCE)
 set(USE_WS OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ixwebsocket)
 # Remove warnings-as-errors for ixwebsocket (third-party code)
 if(TARGET ixwebsocket)
