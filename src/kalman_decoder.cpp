@@ -84,8 +84,11 @@ KalmanDecoder::KalmanDecoder(const Config& config)
     impl_->Q = config.process_noise;
 }
 
-KalmanDecoder::KalmanDecoder(const ChannelConfig& channel_config)
-    : KalmanDecoder(Config{.channel_config = channel_config}) {}
+KalmanDecoder::KalmanDecoder(const ChannelConfig& channel_config) {
+    Config cfg;
+    cfg.channel_config = channel_config;
+    *this = KalmanDecoder(cfg);
+}
 
 KalmanDecoder::~KalmanDecoder() = default;
 KalmanDecoder::KalmanDecoder(KalmanDecoder&&) noexcept = default;
