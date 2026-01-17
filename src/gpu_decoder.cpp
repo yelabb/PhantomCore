@@ -442,8 +442,8 @@ std::expected<DecoderOutput, GPUError> GPUDecoder::decode(std::span<const float>
         DecoderOutput output;
         output.position.x = impl_->h_output_pinned[0];
         output.position.y = impl_->h_output_pinned[1];
-        output.velocity.x = impl_->h_output_pinned[2];
-        output.velocity.y = impl_->h_output_pinned[3];
+        output.velocity.vx = impl_->h_output_pinned[2];
+        output.velocity.vy = impl_->h_output_pinned[3];
         output.processing_time = Clock::now() - start;
         output.confidence = 1.0f;  // TODO: Compute from covariance
         
@@ -697,16 +697,16 @@ std::expected<DecoderOutput, GPUError> MultiProbeDecoder::decode(
                 float weight = impl_->config.probes[i].fusion_weight;
                 fused.position.x += outputs[i].position.x * weight;
                 fused.position.y += outputs[i].position.y * weight;
-                fused.velocity.x += outputs[i].velocity.x * weight;
-                fused.velocity.y += outputs[i].velocity.y * weight;
+                fused.velocity.vx += outputs[i].velocity.vx * weight;
+                fused.velocity.vy += outputs[i].velocity.vy * weight;
                 total_weight += weight;
                 fused.processing_time = std::max(fused.processing_time, outputs[i].processing_time);
             }
             if (total_weight > 0) {
                 fused.position.x /= total_weight;
                 fused.position.y /= total_weight;
-                fused.velocity.x /= total_weight;
-                fused.velocity.y /= total_weight;
+                fused.velocity.vx /= total_weight;
+                fused.velocity.vy /= total_weight;
             }
             break;
         }
@@ -730,16 +730,16 @@ std::expected<DecoderOutput, GPUError> MultiProbeDecoder::decode(
                 float inv_var = outputs[i].confidence;  // Use confidence as proxy for precision
                 fused.position.x += outputs[i].position.x * inv_var;
                 fused.position.y += outputs[i].position.y * inv_var;
-                fused.velocity.x += outputs[i].velocity.x * inv_var;
-                fused.velocity.y += outputs[i].velocity.y * inv_var;
+                fused.velocity.vx += outputs[i].velocity.vx * inv_var;
+                fused.velocity.vy += outputs[i].velocity.vy * inv_var;
                 total_inv_var += inv_var;
                 fused.processing_time = std::max(fused.processing_time, outputs[i].processing_time);
             }
             if (total_inv_var > 0) {
                 fused.position.x /= total_inv_var;
                 fused.position.y /= total_inv_var;
-                fused.velocity.x /= total_inv_var;
-                fused.velocity.y /= total_inv_var;
+                fused.velocity.vx /= total_inv_var;
+                fused.velocity.vy /= total_inv_var;
             }
             fused.confidence = total_inv_var;  // Combined precision
             break;

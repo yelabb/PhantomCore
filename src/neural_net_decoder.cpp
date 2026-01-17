@@ -311,8 +311,8 @@ struct NeuralNetDecoder::Impl {
             DecoderOutput result;
             result.position.x = output_data[0];
             result.position.y = output_data[1];
-            result.velocity.x = output_data[2];
-            result.velocity.y = output_data[3];
+            result.velocity.vx = output_data[2];
+            result.velocity.vy = output_data[3];
             result.confidence = 1.0f;
             
             postprocessing_latency.record(Clock::now() - postprocess_start);
@@ -485,8 +485,8 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
             DecoderOutput blended;
             blended.position.x = nn_w * nn_result->position.x + kalman_w * kalman_result.position.x;
             blended.position.y = nn_w * nn_result->position.y + kalman_w * kalman_result.position.y;
-            blended.velocity.x = nn_w * nn_result->velocity.x + kalman_w * kalman_result.velocity.x;
-            blended.velocity.y = nn_w * nn_result->velocity.y + kalman_w * kalman_result.velocity.y;
+            blended.velocity.vx = nn_w * nn_result->velocity.vx + kalman_w * kalman_result.velocity.vx;
+            blended.velocity.vy = nn_w * nn_result->velocity.vy + kalman_w * kalman_result.velocity.vy;
             blended.confidence = nn_result->confidence;
             blended.processing_time = nn_result->processing_time;
             
@@ -521,8 +521,8 @@ std::expected<DecoderOutput, NNError> NeuralNetDecoder::decode(std::span<const f
             DecoderOutput blended;
             blended.position.x = nn_w * nn_result->position.x + kalman_w * kalman_result.position.x;
             blended.position.y = nn_w * nn_result->position.y + kalman_w * kalman_result.position.y;
-            blended.velocity.x = nn_w * nn_result->velocity.x + kalman_w * kalman_result.velocity.x;
-            blended.velocity.y = nn_w * nn_result->velocity.y + kalman_w * kalman_result.velocity.y;
+            blended.velocity.vx = nn_w * nn_result->velocity.vx + kalman_w * kalman_result.velocity.vx;
+            blended.velocity.vy = nn_w * nn_result->velocity.vy + kalman_w * kalman_result.velocity.vy;
             blended.confidence = nn_result->confidence;
             blended.processing_time = nn_result->processing_time;
             

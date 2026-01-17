@@ -489,13 +489,13 @@ DecoderOutput AdaptiveDecoder::decode_and_update(
         
         Eigen::Vector4f prediction;
         prediction << output.position.x, output.position.y, 
-                     output.velocity.x, output.velocity.y;
+                     output.velocity.vx, output.velocity.vy;
         
         impl_->perform_rls_update(features, target, prediction);
         
         // Track for drift detection
         impl_->recent_predictions.push_back({output.position.x, output.position.y,
-                                             output.velocity.x, output.velocity.y});
+                                             output.velocity.vx, output.velocity.vy});
         impl_->recent_ground_truths.push_back(ground_truth);
         
         while (impl_->recent_predictions.size() > impl_->config.adaptive.drift_window_samples) {
@@ -557,7 +557,7 @@ void AdaptiveDecoder::provide_ground_truth(const Vec4& ground_truth, Timestamp t
             
             Eigen::Vector4f pred_vec;
             pred_vec << output.position.x, output.position.y,
-                       output.velocity.x, output.velocity.y;
+                       output.velocity.vx, output.velocity.vy;
             
             impl_->perform_rls_update(features, target_vec, pred_vec);
         }
