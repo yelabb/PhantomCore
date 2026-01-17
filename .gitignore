@@ -1,0 +1,46 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln
+*.vcxproj*
+.idea/
+*.swp
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Generated files
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.cmake
+
+# Dependencies (fetched by CMake)
+_deps/
+
+# Test outputs
+Testing/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Package managers
+vcpkg_installed/
+conan/
