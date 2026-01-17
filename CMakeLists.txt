@@ -87,6 +87,7 @@ add_library(phantomcore STATIC
     src/latency_tracker.cpp
     src/dimensionality_reduction.cpp
     src/regularization.cpp
+    src/model_checkpoint.cpp
 )
 
 target_include_directories(phantomcore PUBLIC

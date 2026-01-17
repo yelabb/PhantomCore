@@ -4,12 +4,14 @@
 // Version 0.1.0
 
 #include "phantomcore/types.hpp"
+#include "phantomcore/aligned_allocator.hpp"
 #include "phantomcore/simd_utils.hpp"
 #include "phantomcore/bandpass_filter.hpp"
 #include "phantomcore/dimensionality_reduction.hpp"
 #include "phantomcore/regularization.hpp"
 #include "phantomcore/spike_detector.hpp"
 #include "phantomcore/kalman_decoder.hpp"
+#include "phantomcore/model_checkpoint.hpp"
 #include "phantomcore/stream_client.hpp"
 #include "phantomcore/ring_buffer.hpp"
 #include "phantomcore/latency_tracker.hpp"

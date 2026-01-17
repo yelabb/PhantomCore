@@ -183,6 +183,97 @@ const Eigen::VectorXf& PCAProjector::mean() const {
 }
 
 // ============================================================================
+// PCA Serialization
+// ============================================================================
+
+PCAProjector::SerializedState PCAProjector::get_serialized_state() const {
+    SerializedState state;
+    
+    if (!fitted_) return state;
+    
+    state.n_features = n_features_;
+    state.n_components = n_components_;
+    state.total_variance_explained = cumulative_variance_explained();
+    state.scaled = config_.scale;
+    
+    // Mean
+    state.mean.resize(n_features_);
+    for (size_t i = 0; i < n_features_; ++i) {
+        state.mean[i] = impl_->mean(static_cast<Eigen::Index>(i));
+    }
+    
+    // Std (if scaled)
+    if (config_.scale && impl_->std.size() > 0) {
+        state.std.resize(n_features_);
+        for (size_t i = 0; i < n_features_; ++i) {
+            state.std[i] = impl_->std(static_cast<Eigen::Index>(i));
+        }
+    }
+    
+    // Components [n_features x n_components] row-major
+    state.components.resize(n_features_ * n_components_);
+    for (size_t i = 0; i < n_features_; ++i) {
+        for (size_t j = 0; j < n_components_; ++j) {
+            state.components[i * n_components_ + j] = 
+                impl_->components(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j));
+        }
+    }
+    
+    // Explained variance per component
+    state.explained_var.resize(n_components_);
+    for (size_t i = 0; i < n_components_; ++i) {
+        state.explained_var[i] = impl_->explained_var(static_cast<Eigen::Index>(i));
+    }
+    
+    return state;
+}
+
+void PCAProjector::load_serialized_state(const SerializedState& state) {
+    if (state.n_features == 0 || state.n_components == 0) {
+        fitted_ = false;
+        return;
+    }
+    
+    n_features_ = state.n_features;
+    n_components_ = state.n_components;
+    
+    // Mean
+    impl_->mean = Eigen::VectorXf(state.n_features);
+    for (size_t i = 0; i < state.n_features; ++i) {
+        impl_->mean(static_cast<Eigen::Index>(i)) = state.mean[i];
+    }
+    
+    // Std (if scaled)
+    config_.scale = state.scaled;
+    if (state.scaled && !state.std.empty()) {
+        impl_->std = Eigen::VectorXf(state.n_features);
+        for (size_t i = 0; i < state.n_features; ++i) {
+            impl_->std(static_cast<Eigen::Index>(i)) = state.std[i];
+        }
+    }
+    
+    // Components
+    impl_->components = Eigen::MatrixXf(state.n_features, state.n_components);
+    for (size_t i = 0; i < state.n_features; ++i) {
+        for (size_t j = 0; j < state.n_components; ++j) {
+            impl_->components(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) = 
+                state.components[i * state.n_components + j];
+        }
+    }
+    
+    // Explained variance
+    impl_->explained_var = Eigen::VectorXf(state.n_components);
+    for (size_t i = 0; i < state.n_components; ++i) {
+        impl_->explained_var(static_cast<Eigen::Index>(i)) = state.explained_var[i];
+    }
+    
+    // Compute total variance
+    impl_->total_variance = impl_->explained_var.sum() / state.total_variance_explained;
+    
+    fitted_ = true;
+}
+
+// ============================================================================
 // FactorAnalysis Implementation (EM Algorithm)
 // ============================================================================
 

@@ -95,6 +95,31 @@ public:
     /// Get feature means
     const Eigen::VectorXf& mean() const;
     
+    // ========================================================================
+    // Serialization (for ModelCheckpoint)
+    // ========================================================================
+    
+    /**
+     * @brief Get all state for serialization
+     */
+    struct SerializedState {
+        size_t n_features = 0;
+        size_t n_components = 0;
+        std::vector<float> mean;           // [n_features]
+        std::vector<float> std;            // [n_features] (if scaled)
+        std::vector<float> components;     // [n_features x n_components] row-major
+        std::vector<float> explained_var;  // [n_components]
+        float total_variance_explained = 0.0f;
+        bool scaled = false;
+    };
+    
+    SerializedState get_serialized_state() const;
+    
+    /**
+     * @brief Restore PCA state from serialized data
+     */
+    void load_serialized_state(const SerializedState& state);
+    
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

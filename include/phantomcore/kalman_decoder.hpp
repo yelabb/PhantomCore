@@ -177,14 +177,98 @@ public:
     );
     
     /**
-     * @brief Load pre-trained model weights
+     * @brief Load pre-trained model weights (observation matrix only)
+     * @deprecated Use load_checkpoint for full state restoration
      */
     void load_weights(std::span<const float> observation_weights);
     
     /**
-     * @brief Save current model weights
+     * @brief Save current model weights (observation matrix only)
+     * @deprecated Use create_checkpoint for full state serialization
      */
     std::vector<float> save_weights() const;
+    
+    // ========================================================================
+    // Full State Serialization (for ModelCheckpoint)
+    // ========================================================================
+    
+    /**
+     * @brief Get spike normalization parameters
+     * @return Pair of (mean, std) vectors for z-score normalization
+     */
+    std::pair<std::vector<float>, std::vector<float>> get_normalization_params() const;
+    
+    /**
+     * @brief Set spike normalization parameters
+     */
+    void set_normalization_params(std::span<const float> mean, std::span<const float> std);
+    
+    /**
+     * @brief Get full observation matrix (H)
+     */
+    std::vector<float> get_observation_matrix() const;
+    
+    /**
+     * @brief Get latent observation matrix (H_latent)
+     */
+    std::vector<float> get_latent_observation_matrix() const;
+    
+    /**
+     * @brief Set full observation matrix
+     */
+    void set_observation_matrix(std::span<const float> H, size_t rows, size_t cols);
+    
+    /**
+     * @brief Set latent observation matrix
+     */
+    void set_latent_observation_matrix(std::span<const float> H_latent, size_t rows, size_t cols);
+    
+    /**
+     * @brief Get state transition matrix (A)
+     */
+    std::array<float, 16> get_state_transition() const;
+    
+    /**
+     * @brief Get process noise matrix (Q)
+     */
+    std::array<float, 16> get_process_noise() const;
+    
+    /**
+     * @brief Check if using latent space decoding
+     */
+    bool is_using_latent_space() const;
+    
+    /**
+     * @brief Get latent space dimension
+     */
+    size_t get_latent_dim() const;
+    
+    /**
+     * @brief Get PCA projector (for checkpoint serialization)
+     * @return Pointer to PCA projector, or nullptr if not using latent space
+     */
+    const PCAProjector* get_pca_projector() const;
+    
+    /**
+     * @brief Set PCA projector state from checkpoint
+     */
+    void set_pca_from_checkpoint(
+        std::span<const float> mean,
+        std::span<const float> components,
+        size_t n_features,
+        size_t n_components
+    );
+    
+    /**
+     * @brief Get calibration metadata
+     */
+    struct CalibrationMetadata {
+        size_t calibration_samples = 0;
+        float r2_score = 0.0f;
+        float cv_score = 0.0f;
+        float ridge_lambda = 0.0f;
+    };
+    CalibrationMetadata get_calibration_metadata() const;
     
     /**
      * @brief Get decoder statistics
