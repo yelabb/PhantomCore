@@ -242,6 +242,68 @@ void vector_fma(const float* a, const float* b, const float* c, float* result, s
     }
 }
 
+// ============================================================================
+// Aligned Variants (use _mm256_load_ps - requires 32-byte alignment)
+// ============================================================================
+
+float vector_sum_aligned(const float* data, size_t size) {
+    // Debug-mode alignment check
+    assert_avx2_aligned(data, "vector_sum_aligned");
+    
+    __m256 sum_vec = _mm256_setzero_ps();
+    
+    size_t i = 0;
+    // Process 8 floats at a time using ALIGNED loads (faster!)
+    for (; i + 8 <= size; i += 8) {
+        __m256 v = _mm256_load_ps(data + i);  // ALIGNED load
+        sum_vec = _mm256_add_ps(sum_vec, v);
+    }
+    
+    // Horizontal sum
+    __m128 hi = _mm256_extractf128_ps(sum_vec, 1);
+    __m128 lo = _mm256_castps256_ps128(sum_vec);
+    __m128 sum128 = _mm_add_ps(hi, lo);
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    float result = _mm_cvtss_f32(sum128);
+    
+    // Handle remainder (scalar - can't use aligned for partial vectors)
+    for (; i < size; ++i) {
+        result += data[i];
+    }
+    
+    return result;
+}
+
+float vector_dot_aligned(const float* a, const float* b, size_t size) {
+    // Debug-mode alignment checks
+    assert_avx2_aligned(a, "vector_dot_aligned (a)");
+    assert_avx2_aligned(b, "vector_dot_aligned (b)");
+    
+    __m256 sum = _mm256_setzero_ps();
+    
+    size_t i = 0;
+    for (; i + 8 <= size; i += 8) {
+        __m256 va = _mm256_load_ps(a + i);  // ALIGNED load
+        __m256 vb = _mm256_load_ps(b + i);  // ALIGNED load
+        sum = _mm256_fmadd_ps(va, vb, sum);
+    }
+    
+    // Horizontal sum
+    __m128 hi = _mm256_extractf128_ps(sum, 1);
+    __m128 lo = _mm256_castps256_ps128(sum);
+    __m128 sum128 = _mm_add_ps(hi, lo);
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    float result = _mm_cvtss_f32(sum128);
+    
+    for (; i < size; ++i) {
+        result += a[i] * b[i];
+    }
+    
+    return result;
+}
+
 void threshold_crossing(
     const float* data,
     const float* thresholds,

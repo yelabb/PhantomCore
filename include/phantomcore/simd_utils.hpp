@@ -15,6 +15,7 @@
 #endif
 
 #include "types.hpp"
+#include "aligned_allocator.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -36,14 +37,36 @@ bool has_neon();
 const char* simd_info();
 
 // ============================================================================
-// Vectorized Operations
+// Alignment Utilities
+// ============================================================================
+
+/**
+ * @brief Check if pointer is 32-byte aligned (required for AVX2 aligned loads)
+ */
+[[nodiscard]] inline bool is_avx2_aligned(const void* ptr) noexcept {
+    return aligned::is_aligned(ptr, aligned::AVX2_ALIGNMENT);
+}
+
+/**
+ * @brief Assert AVX2 alignment in debug builds
+ * In release builds, this is a no-op.
+ */
+inline void assert_avx2_aligned(const void* ptr, const char* context = nullptr) {
+    aligned::assert_aligned(ptr, aligned::AVX2_ALIGNMENT, context);
+}
+
+// ============================================================================
+// Vectorized Operations (Unaligned - Safe for any pointer)
 // ============================================================================
 
 /**
  * @brief Computes sum of float array using SIMD
- * @param data Pointer to float array (should be 32-byte aligned for best perf)
+ * @param data Pointer to float array (unaligned OK, aligned preferred)
  * @param size Number of elements
  * @return Sum of all elements
+ * 
+ * @note Uses _mm256_loadu_ps (unaligned load). For maximum performance
+ *       with aligned data, use vector_sum_aligned().
  */
 float vector_sum(const float* data, size_t size);
 
@@ -101,6 +124,52 @@ float vector_dot(const float* a, const float* b, size_t size);
  * @brief Fused multiply-add: result[i] = a[i] * b[i] + c[i]
  */
 void vector_fma(const float* a, const float* b, const float* c, float* result, size_t size);
+
+// ============================================================================
+// Aligned Variants (Faster, requires 32-byte aligned pointers)
+// ============================================================================
+
+#ifdef PHANTOMCORE_HAS_AVX2
+
+/**
+ * @brief Sum using aligned loads (faster, REQUIRES 32-byte alignment)
+ * @warning WILL CRASH (SegFault) if data is not 32-byte aligned!
+ *          Use vector_sum() if alignment is not guaranteed.
+ */
+float vector_sum_aligned(const float* data, size_t size);
+
+/**
+ * @brief Dot product using aligned loads (faster, REQUIRES alignment)
+ * @warning Both a and b MUST be 32-byte aligned!
+ */
+float vector_dot_aligned(const float* a, const float* b, size_t size);
+
+/**
+ * @brief Safe aligned operations using AlignedVector
+ * These overloads guarantee alignment at compile time.
+ */
+inline float vector_sum(const AlignedVector<float>& data) {
+    return vector_sum_aligned(data.data(), data.size());
+}
+
+inline float vector_dot(const AlignedVector<float>& a, const AlignedVector<float>& b) {
+    return vector_dot_aligned(a.data(), b.data(), std::min(a.size(), b.size()));
+}
+
+/**
+ * @brief Safe aligned operations using AlignedBuffer
+ */
+template<size_t N>
+inline float vector_sum(const AlignedBuffer<float, N>& data) {
+    return vector_sum_aligned(data.data(), N);
+}
+
+template<size_t N>
+inline float vector_dot(const AlignedBuffer<float, N>& a, const AlignedBuffer<float, N>& b) {
+    return vector_dot_aligned(a.data(), b.data(), N);
+}
+
+#endif // PHANTOMCORE_HAS_AVX2
 
 // ============================================================================
 // Neural Signal Processing Operations
