@@ -209,9 +209,11 @@ Summary:
 - **Ridge Regression**: L2-regularized calibration prevents overfitting on noisy neural data
 - **Bandpass Filtering**: 300-3000Hz IIR filter for spike isolation
 - **SIMD**: AVX2 vectorized spike z-score normalization and dot products
+- **Eigen Vectorization**: Matrix-vector products auto-vectorized with `-march=native -O3` (GCC/Clang) or `/arch:AVX2 /O2` (MSVC)
 - **Aligned Memory**: 32-byte aligned allocators for safe SIMD operations
 - **Lock-free**: Ring buffer with atomic operations for deterministic timing
 - **Dynamic Channels**: Runtime hardware configuration without recompilation
+- **Full Serialization**: `ModelCheckpoint` saves complete pipeline state (not just weights)
 
 ---
 
@@ -304,11 +306,42 @@ DecoderOutput output = decoder.decode(spikes);
 
 // Calibrate from training data (with Ridge regularization)
 decoder.calibrate(neural_matrix, kinematics_matrix);
-
-// Save/load trained weights
-auto weights = decoder.save_weights();
-decoder.load_weights(weights);
 ```
+
+### ModelCheckpoint (Session Persistence)
+
+```cpp
+// After calibration, save the COMPLETE pipeline state
+ModelCheckpoint checkpoint = create_checkpoint(decoder);
+checkpoint.model_name = "Subject01_Session03";
+checkpoint.notes = "Trained on 5000 trials, R²=0.87";
+
+// Save to disk (binary format)
+checkpoint.save("models/subject01_session03.phmc");
+
+// Later: restore a session
+ModelCheckpoint loaded = ModelCheckpoint::load("models/subject01_session03.phmc");
+if (loaded.validate()) {
+    std::cout << "Loaded model: " << loaded.model_name << "\n";
+    std::cout << "Channels: " << loaded.channel_config.num_channels << "\n";
+    std::cout << "R² score: " << loaded.calibration_r2_score << "\n";
+    
+    // Create decoder with same config
+    KalmanDecoder restored_decoder(loaded.channel_config);
+    restore_from_checkpoint(restored_decoder, loaded);
+    
+    // Ready to decode!
+}
+```
+
+**Checkpoint includes:**
+- Channel configuration (hardware preset)
+- Spike normalization (mean/std for z-score)
+- PCA projection matrix and centering
+- Kalman observation matrix (H)
+- Latent observation matrix (H_latent)
+- Process/measurement noise parameters
+- Calibration metadata (R², λ, sample count)
 
 ### SIMD Operations
 
