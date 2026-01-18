@@ -12,6 +12,7 @@
 
 **Ultra-Low-Latency Neural Signal Processing Library**
 
+[![CI](https://github.com/yelabb/PhantomCore/actions/workflows/ci.yml/badge.svg)](https://github.com/yelabb/PhantomCore/actions/workflows/ci.yml)
 [![C++23](https://img.shields.io/badge/C++-23-blue.svg)](https://isocpp.org/)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-green.svg)](https://cmake.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -733,3 +734,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 *Where every microsecond counts*
 
 </div>
+
