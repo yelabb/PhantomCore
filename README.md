@@ -734,6 +734,15 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
+This project was developed with assistance from AI coding assistants and workflows:
+- Claude Opus 4.5 (Anthropic)
+- Claude Sonnet 4.5 (Anthropic)
+- Gemini 3.0 Pro (Google)
+- GPT 5.2 (OpenAI)
+
+All code was tested and validated by the author.
+
+**Libraries:**
 - **Eigen** - Linear algebra library
 - **IXWebSocket** - WebSocket implementation
 - **msgpack-c** - MessagePack serialization
